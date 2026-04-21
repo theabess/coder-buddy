@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "coder-buddy"
+version = "0.1.0"
+description = "A self-correcting autonomous coding agent"
+requires-python = ">=3.11"
+dependencies = [
+    "langgraph>=0.2",
+    "pydantic-ai>=0.0.14",
+    "pydantic>=2.0",
+    "docker>=7.0",
+]
+
+[project.optional-dependencies]
+e2b = [
+    "e2b>=0.17",
+]
+# pyodide is browser-based and not pip-installable; the pyodide backend
+# uses it as an ambient runtime (e.g. in JupyterLite) rather than a package dep.
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "hypothesis>=6.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
