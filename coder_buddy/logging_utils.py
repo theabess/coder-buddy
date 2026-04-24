@@ -69,4 +69,30 @@ def _extract_error_summary(logs: str) -> str:
     Returns:
         A short, human-readable error summary (≤ 500 characters).
     """
-    ...
+    lines = logs.splitlines()
+
+    # Find the last traceback line: the line immediately following a
+    # "Traceback (most recent call last):" block is the exception line,
+    # which appears as the very last non-empty line after the header.
+    last_exception_line: str | None = None
+    in_traceback = False
+    for line in lines:
+        if line.strip().startswith("Traceback (most recent call last):"):
+            in_traceback = True
+            continue
+        if in_traceback:
+            stripped = line.strip()
+            if stripped:
+                # Keep updating — we want the *last* exception line
+                last_exception_line = stripped
+
+    if last_exception_line is not None:
+        return last_exception_line[:500]
+
+    # No traceback found — return the first non-empty line
+    for line in lines:
+        stripped = line.strip()
+        if stripped:
+            return stripped[:500]
+
+    return ""[:500]
