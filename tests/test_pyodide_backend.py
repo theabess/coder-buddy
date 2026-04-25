@@ -357,31 +357,36 @@ class TestInstallDependencies:
 class TestTimeoutHandling:
     """execute() sets timed_out=True when the execution thread does not finish in time."""
 
+    # Use time.sleep() instead of a busy loop — sleep() releases the GIL and
+    # allows the timeout thread to join cleanly without leaving a CPU-spinning
+    # daemon thread behind that would slow down subsequent tests.
+    _SLOW_CODE = "import time; time.sleep(5)"
+
     def test_timed_out_true_for_infinite_loop(self):
         """timed_out=True when code runs longer than the timeout."""
         backend = PyodideBackend()
-        result = backend.execute("while True: pass", timeout=0.05)
+        result = backend.execute(self._SLOW_CODE, timeout=0.05)
 
         assert result.timed_out is True
 
     def test_exit_code_negative_one_on_timeout(self):
         """exit_code is -1 when execution timed out."""
         backend = PyodideBackend()
-        result = backend.execute("while True: pass", timeout=0.05)
+        result = backend.execute(self._SLOW_CODE, timeout=0.05)
 
         assert result.exit_code == -1
 
     def test_has_errors_true_on_timeout(self):
         """has_errors is True when execution timed out."""
         backend = PyodideBackend()
-        result = backend.execute("while True: pass", timeout=0.05)
+        result = backend.execute(self._SLOW_CODE, timeout=0.05)
 
         assert result.has_errors is True
 
     def test_combined_output_contains_timeout_notice(self):
         """combined_output includes the TIMEOUT notice when timed_out=True."""
         backend = PyodideBackend()
-        result = backend.execute("while True: pass", timeout=0.05)
+        result = backend.execute(self._SLOW_CODE, timeout=0.05)
 
         assert "TIMEOUT" in result.combined_output
 
