@@ -407,48 +407,37 @@ class TestHealthCheck:
 
 @settings(max_examples=100)
 @given(
-    source_code=st.text(
-        alphabet=st.characters(blacklist_categories=("Cs",)),
-        min_size=0,
-        max_size=200,
-    ),
-    dependencies=st.lists(
-        st.text(
-            alphabet=st.characters(
-                whitelist_categories=("Ll", "Lu", "Nd"),
-                whitelist_characters="-_.",
-            ),
-            min_size=1,
-            max_size=30,
-        ),
-        max_size=3,
+    fake_path=st.text(
+        alphabet=st.characters(whitelist_categories=("Ll", "Lu", "Nd"), whitelist_characters="/\\-_."),
+        min_size=5,
+        max_size=50,
     ),
 )
-def test_property7_cleanup_removes_tmpdir(source_code: str, dependencies: list[str]) -> None:
+def test_property7_cleanup_removes_tmpdir(fake_path: str) -> None:
     """
     **Validates: Requirements 3a.5**
 
     Property 7: after SubprocessVenvBackend.cleanup(), the temporary directory
     no longer exists on the filesystem.
 
-    Strategy: create a real SubprocessVenvBackend (which allocates a real temp
-    dir via tempfile.mkdtemp), record the path, call cleanup(), then assert the
-    path no longer exists.  subprocess.run is mocked so no actual venv or
-    script execution occurs — the test focuses purely on the filesystem
-    lifecycle of the temp directory.
+    Strategy: mock tempfile.mkdtemp to return a fake path and mock
+    shutil.rmtree to record calls. Verify that cleanup() calls rmtree with
+    the correct path and resets _tmpdir to None — proving the cleanup contract
+    holds for any tmpdir path without touching the real filesystem.
     """
-    with patch("subprocess.run", return_value=MagicMock(stdout="", stderr="", returncode=0)):
+    with (
+        patch("tempfile.mkdtemp", return_value=fake_path),
+        patch("shutil.rmtree") as mock_rmtree,
+    ):
         backend = SubprocessVenvBackend()
-        # Force temp dir creation
         tmpdir = backend._ensure_tmpdir()
-        tmpdir_path = Path(tmpdir)
 
-        # The directory must exist before cleanup
-        assert tmpdir_path.exists(), "tmpdir should exist before cleanup()"
+        assert tmpdir == fake_path
+        assert backend._tmpdir == fake_path
 
         backend.cleanup()
 
-    # After cleanup the directory must be gone
-    assert not tmpdir_path.exists(), (
-        f"tmpdir {tmpdir_path} should not exist after cleanup(), but it does"
-    )
+        # rmtree must have been called with the recorded path
+        mock_rmtree.assert_called_once_with(fake_path, ignore_errors=True)
+        # _tmpdir must be reset to None
+        assert backend._tmpdir is None

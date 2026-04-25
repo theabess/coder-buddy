@@ -45,12 +45,12 @@ def log_node_event(
         extra: Optional dict of additional fields to include in the log entry.
     """
     entry: dict = {
+        **(extra or {}),
         "ts": time.time(),
         "node": node,
         "event": event,
         "retry_count": retry_count,
         "outcome": outcome,
-        **(extra or {}),
     }
     _logger.info(json.dumps(entry))
 

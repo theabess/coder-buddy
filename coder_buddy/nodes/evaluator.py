@@ -8,13 +8,13 @@ LangGraph uses to select the next node.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
-if TYPE_CHECKING:
-    from coder_buddy.state import AgentState
+from coder_buddy.logging_utils import _extract_error_summary, log_node_event
+from coder_buddy.state import AgentState
 
 
-def evaluator(state: "AgentState") -> Literal["retry", "refactor", "fail"]:
+def evaluator(state: AgentState) -> Literal["retry", "refactor", "fail"]:
     """
     Determine the next step in the agent cycle.
 
@@ -34,4 +34,30 @@ def evaluator(state: "AgentState") -> Literal["retry", "refactor", "fail"]:
     Returns:
         One of ``"retry"``, ``"refactor"``, or ``"fail"``.
     """
-    ...
+    if state["retry_count"] >= state["max_retries"]:
+        log_node_event(
+            node="evaluator",
+            event="end",
+            retry_count=state["retry_count"],
+            outcome="fail",
+        )
+        return "fail"
+
+    if state["error_status"]:
+        log_node_event(
+            node="evaluator",
+            event="end",
+            retry_count=state["retry_count"],
+            outcome="retry",
+            extra={"error_summary": _extract_error_summary(state["execution_logs"])},
+        )
+        state["retry_count"] += 1
+        return "retry"
+
+    log_node_event(
+        node="evaluator",
+        event="end",
+        retry_count=state["retry_count"],
+        outcome="refactor",
+    )
+    return "refactor"
