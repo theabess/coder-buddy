@@ -11,8 +11,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, TypedDict
 
+from coder_buddy.models import HistoryEntry, TokenUsage
+
 if TYPE_CHECKING:
-    from coder_buddy.models import HistoryEntry, TokenUsage
+    pass
 
 
 class AgentState(TypedDict):
@@ -83,3 +85,7 @@ class AgentState(TypedDict):
 
     pre_refactor_code: "str | None"
     """Saved pre-refactor source code used as a fallback."""
+
+    warning: "str | None"
+    """Optional warning message set when a fallback or degraded path is taken
+    (e.g. refactored code failed re-execution, refactor timed out)."""
