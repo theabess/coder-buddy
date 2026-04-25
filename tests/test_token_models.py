@@ -157,6 +157,137 @@ class TestTokenUsageAggregation:
         assert [r.input_tokens for r in records] == [1, 2, 3, 4, 5]
 
 
+class TestTokenRecordCostEstimation:
+    """Tests for cost estimation using KNOWN_PRICES and estimate_cost()."""
+
+    # ------------------------------------------------------------------
+    # Imports are done at class level via module-level imports below;
+    # the actual imports live at the top of the test functions to keep
+    # the class self-contained and readable.
+    # ------------------------------------------------------------------
+
+    def test_gemini_1_5_pro_pricing(self):
+        """1000 input + 500 output tokens with gemini-1.5-pro prices."""
+        from coder_buddy.llm.pricing import estimate_cost, KNOWN_PRICES
+
+        cost = estimate_cost("gemini-1.5-pro", 1000, 500)
+        # (1000 * 0.00125/1000) + (500 * 0.005/1000) = 0.00125 + 0.0025
+        assert cost == pytest.approx(0.00375)
+
+    def test_gpt_4o_pricing(self):
+        """2000 input + 1000 output tokens with gpt-4o prices."""
+        from coder_buddy.llm.pricing import estimate_cost
+
+        cost = estimate_cost("gpt-4o", 2000, 1000)
+        # (2000 * 0.005/1000) + (1000 * 0.015/1000) = 0.01 + 0.015
+        assert cost == pytest.approx(0.025)
+
+    def test_claude_3_5_sonnet_pricing(self):
+        """500 input + 200 output tokens with claude-3-5-sonnet prices."""
+        from coder_buddy.llm.pricing import estimate_cost
+
+        cost = estimate_cost("claude-3-5-sonnet", 500, 200)
+        # (500 * 0.003/1000) + (200 * 0.015/1000) = 0.0015 + 0.003
+        assert cost == pytest.approx(0.0045)
+
+    def test_zero_tokens_cost_is_zero(self):
+        """Any model with zero tokens should produce a cost of 0.0."""
+        from coder_buddy.llm.pricing import estimate_cost
+
+        for model in ("gemini-1.5-pro", "gpt-4o", "claude-3-5-sonnet"):
+            cost = estimate_cost(model, 0, 0)
+            assert cost == pytest.approx(0.0), f"Expected 0.0 for {model} with zero tokens"
+
+    def test_only_input_tokens(self):
+        """Cost when output_tokens=0 uses only the input price."""
+        from coder_buddy.llm.pricing import estimate_cost
+
+        cost = estimate_cost("gpt-4o", 1000, 0)
+        # 1000 * 0.005/1000 = 0.005
+        assert cost == pytest.approx(0.005)
+
+    def test_only_output_tokens(self):
+        """Cost when input_tokens=0 uses only the output price."""
+        from coder_buddy.llm.pricing import estimate_cost
+
+        cost = estimate_cost("gpt-4o", 0, 1000)
+        # 1000 * 0.015/1000 = 0.015
+        assert cost == pytest.approx(0.015)
+
+    def test_unknown_model_returns_none(self):
+        """estimate_cost returns None for a model not in KNOWN_PRICES."""
+        from coder_buddy.llm.pricing import estimate_cost
+
+        result = estimate_cost("unknown-model", 100, 50)
+        assert result is None
+
+    def test_all_three_known_models_in_known_prices(self):
+        """KNOWN_PRICES contains all three expected model keys."""
+        from coder_buddy.llm.pricing import KNOWN_PRICES
+
+        assert "gemini-1.5-pro" in KNOWN_PRICES
+        assert "gpt-4o" in KNOWN_PRICES
+        assert "claude-3-5-sonnet" in KNOWN_PRICES
+
+    def test_known_prices_values_are_tuples_of_two_positive_floats(self):
+        """Each entry in KNOWN_PRICES is a tuple of two positive floats."""
+        from coder_buddy.llm.pricing import KNOWN_PRICES
+
+        for model, prices in KNOWN_PRICES.items():
+            assert isinstance(prices, tuple), f"{model}: expected tuple, got {type(prices)}"
+            assert len(prices) == 2, f"{model}: expected 2-element tuple"
+            input_price, output_price = prices
+            assert isinstance(input_price, float), f"{model}: input price not float"
+            assert isinstance(output_price, float), f"{model}: output price not float"
+            assert input_price > 0, f"{model}: input price must be positive"
+            assert output_price > 0, f"{model}: output price must be positive"
+
+    def test_estimate_cost_with_override_prices(self):
+        """Override prices bypass KNOWN_PRICES and use the provided per-token rates."""
+        from coder_buddy.llm.pricing import estimate_cost
+
+        # price_per_input_token and price_per_output_token are per-token (not per-1k)
+        cost = estimate_cost(
+            "unknown-model",
+            input_tokens=1000,
+            output_tokens=500,
+            price_per_input_token=0.000005,
+            price_per_output_token=0.000015,
+        )
+        # (1000 * 0.000005) + (500 * 0.000015) = 0.005 + 0.0075
+        assert cost == pytest.approx(0.0125)
+
+    def test_estimate_cost_override_ignores_known_prices(self):
+        """Override prices are used even when the model is in KNOWN_PRICES."""
+        from coder_buddy.llm.pricing import estimate_cost
+
+        # Use a known model but supply custom per-token prices
+        cost = estimate_cost(
+            "gpt-4o",
+            input_tokens=100,
+            output_tokens=100,
+            price_per_input_token=0.001,
+            price_per_output_token=0.002,
+        )
+        # (100 * 0.001) + (100 * 0.002) = 0.1 + 0.2
+        assert cost == pytest.approx(0.3)
+
+    def test_token_record_stores_computed_cost(self):
+        """TokenRecord correctly stores a cost computed via estimate_cost()."""
+        from coder_buddy.llm.pricing import estimate_cost
+        from coder_buddy.models import TokenRecord
+
+        computed = estimate_cost("gemini-1.5-pro", 1000, 500)
+        record = TokenRecord(
+            input_tokens=1000,
+            output_tokens=500,
+            estimated_cost_usd=computed,
+        )
+        assert record.estimated_cost_usd == pytest.approx(0.00375)
+        assert record.input_tokens == 1000
+        assert record.output_tokens == 500
+
+
 # Feature: coder-buddy, Property 22: TokenUsage.total_input_tokens and total_output_tokens equal the arithmetic sum of per-node records
 from hypothesis import given, settings
 import hypothesis.strategies as st
