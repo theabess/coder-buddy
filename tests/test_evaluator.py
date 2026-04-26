@@ -1,5 +1,13 @@
 """
-Unit tests for the evaluator conditional edge function.
+Unit tests for the evaluator node.
+
+The evaluator is now a proper LangGraph node (not a bare conditional edge
+function) that returns a partial state dict.  It sets ``_route`` to the
+routing decision and increments ``retry_count`` in the returned dict when
+routing to ``"retry"``.
+
+The companion ``evaluator_router`` function reads ``_route`` from state and
+returns the routing string for LangGraph's conditional edge.
 
 Validates all three routing branches:
 - "fail"    — when retry_count >= max_retries
@@ -22,7 +30,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from unittest.mock import patch
 
-from coder_buddy.nodes.evaluator import evaluator
+from coder_buddy.nodes.evaluator import evaluator, evaluator_router
 from coder_buddy.models import TokenUsage
 
 
@@ -61,7 +69,21 @@ def make_state(
         "session_history": [],
         "max_retries": max_retries,
         "pre_refactor_code": None,
+        "_route": None,
     }
+
+
+def _route(state: dict, result: dict) -> str:
+    """
+    Simulate LangGraph state merge and return the routing decision.
+
+    The evaluator node returns a partial state dict.  LangGraph merges it
+    into the full state before calling the conditional edge function.
+    This helper merges the result into a copy of state and calls
+    ``evaluator_router`` to get the routing string.
+    """
+    merged = {**state, **result}
+    return evaluator_router(merged)
 
 
 # --------------------------------------------------------------------------- #
@@ -70,37 +92,38 @@ def make_state(
 
 
 class TestEvaluatorFailBranch:
-    """Evaluator returns 'fail' when retry_count >= max_retries."""
+    """Evaluator routes to 'fail' when retry_count >= max_retries."""
 
     def test_fail_when_retry_count_equals_max_retries(self):
         """Exact boundary: retry_count == max_retries → 'fail'."""
         state = make_state(retry_count=5, max_retries=5, error_status=True)
         result = evaluator(state)
-        assert result == "fail"
+        assert _route(state, result) == "fail"
 
     def test_fail_when_retry_count_exceeds_max_retries(self):
         """retry_count > max_retries also routes to 'fail'."""
         state = make_state(retry_count=6, max_retries=5, error_status=True)
         result = evaluator(state)
-        assert result == "fail"
+        assert _route(state, result) == "fail"
 
     def test_fail_even_when_no_error_status(self):
         """'fail' takes priority over error_status=False when limit is reached."""
         state = make_state(retry_count=5, max_retries=5, error_status=False)
         result = evaluator(state)
-        assert result == "fail"
+        assert _route(state, result) == "fail"
 
     def test_fail_with_max_retries_one(self):
         """With max_retries=1, retry_count=1 immediately routes to 'fail'."""
         state = make_state(retry_count=1, max_retries=1, error_status=True)
         result = evaluator(state)
-        assert result == "fail"
+        assert _route(state, result) == "fail"
 
     def test_fail_does_not_increment_retry_count(self):
-        """retry_count must not be mutated when routing to 'fail'."""
+        """retry_count must not be incremented in the result when routing to 'fail'."""
         state = make_state(retry_count=5, max_retries=5, error_status=True)
-        evaluator(state)
-        assert state["retry_count"] == 5
+        result = evaluator(state)
+        # The result dict should not contain a retry_count update
+        assert result.get("retry_count", state["retry_count"]) == 5
 
 
 # --------------------------------------------------------------------------- #
@@ -109,38 +132,38 @@ class TestEvaluatorFailBranch:
 
 
 class TestEvaluatorRetryBranch:
-    """Evaluator returns 'retry' when there are errors and retries remain."""
+    """Evaluator routes to 'retry' when there are errors and retries remain."""
 
     def test_retry_when_error_status_true(self):
         """error_status=True with retries remaining → 'retry'."""
         state = make_state(retry_count=0, max_retries=5, error_status=True)
         result = evaluator(state)
-        assert result == "retry"
+        assert _route(state, result) == "retry"
 
     def test_retry_at_one_below_max(self):
         """retry_count == max_retries - 1 is still within the retry window."""
         state = make_state(retry_count=4, max_retries=5, error_status=True)
         result = evaluator(state)
-        assert result == "retry"
+        assert _route(state, result) == "retry"
 
     def test_retry_increments_retry_count_by_one(self):
-        """retry_count must be incremented by exactly 1 when routing to 'retry'."""
+        """retry_count must be incremented by exactly 1 in the result dict."""
         state = make_state(retry_count=0, max_retries=5, error_status=True)
-        evaluator(state)
-        assert state["retry_count"] == 1
+        result = evaluator(state)
+        assert result.get("retry_count") == 1
 
     def test_retry_increments_from_nonzero_count(self):
         """Increment works correctly from a non-zero starting count."""
         state = make_state(retry_count=3, max_retries=5, error_status=True)
-        evaluator(state)
-        assert state["retry_count"] == 4
+        result = evaluator(state)
+        assert result.get("retry_count") == 4
 
     def test_retry_increments_exactly_once_per_call(self):
         """A single evaluator call increments retry_count by exactly 1, not more."""
         state = make_state(retry_count=2, max_retries=5, error_status=True)
         original = state["retry_count"]
-        evaluator(state)
-        assert state["retry_count"] == original + 1
+        result = evaluator(state)
+        assert result.get("retry_count") == original + 1
 
     def test_retry_with_execution_logs(self):
         """Routing to 'retry' works correctly when execution_logs is non-empty."""
@@ -151,7 +174,7 @@ class TestEvaluatorRetryBranch:
             execution_logs="Traceback (most recent call last):\n  File 'main.py'\nNameError: name 'x' is not defined",
         )
         result = evaluator(state)
-        assert result == "retry"
+        assert _route(state, result) == "retry"
 
     def test_retry_with_empty_execution_logs(self):
         """Routing to 'retry' works even when execution_logs is empty."""
@@ -162,7 +185,7 @@ class TestEvaluatorRetryBranch:
             execution_logs="",
         )
         result = evaluator(state)
-        assert result == "retry"
+        assert _route(state, result) == "retry"
 
 
 # --------------------------------------------------------------------------- #
@@ -171,37 +194,37 @@ class TestEvaluatorRetryBranch:
 
 
 class TestEvaluatorRefactorBranch:
-    """Evaluator returns 'refactor' when execution succeeded and retries remain."""
+    """Evaluator routes to 'refactor' when execution succeeded and retries remain."""
 
     def test_refactor_when_no_errors(self):
         """error_status=False with retries remaining → 'refactor'."""
         state = make_state(retry_count=0, max_retries=5, error_status=False)
         result = evaluator(state)
-        assert result == "refactor"
+        assert _route(state, result) == "refactor"
 
     def test_refactor_after_successful_retry(self):
         """'refactor' is returned even when retry_count > 0, as long as no errors."""
         state = make_state(retry_count=3, max_retries=5, error_status=False)
         result = evaluator(state)
-        assert result == "refactor"
+        assert _route(state, result) == "refactor"
 
     def test_refactor_at_one_below_max_with_no_errors(self):
         """retry_count == max_retries - 1 with no errors still routes to 'refactor'."""
         state = make_state(retry_count=4, max_retries=5, error_status=False)
         result = evaluator(state)
-        assert result == "refactor"
+        assert _route(state, result) == "refactor"
 
     def test_refactor_does_not_increment_retry_count(self):
-        """retry_count must not be mutated when routing to 'refactor'."""
+        """retry_count must not be incremented in the result when routing to 'refactor'."""
         state = make_state(retry_count=2, max_retries=5, error_status=False)
-        evaluator(state)
-        assert state["retry_count"] == 2
+        result = evaluator(state)
+        assert result.get("retry_count", state["retry_count"]) == 2
 
     def test_refactor_with_max_retries_one_and_zero_count(self):
         """With max_retries=1 and retry_count=0, no-error run routes to 'refactor'."""
         state = make_state(retry_count=0, max_retries=1, error_status=False)
         result = evaluator(state)
-        assert result == "refactor"
+        assert _route(state, result) == "refactor"
 
 
 # --------------------------------------------------------------------------- #
@@ -215,20 +238,20 @@ class TestEvaluatorBranchPriority:
     def test_fail_takes_priority_over_error_status(self):
         """
         When retry_count == max_retries AND error_status is True,
-        the evaluator must return 'fail', not 'retry'.
+        the evaluator must route to 'fail', not 'retry'.
         """
         state = make_state(retry_count=5, max_retries=5, error_status=True)
         result = evaluator(state)
-        assert result == "fail"
+        assert _route(state, result) == "fail"
 
     def test_fail_does_not_increment_when_error_status_true(self):
         """
         When routing to 'fail' (even with error_status=True),
-        retry_count must remain unchanged.
+        retry_count must remain unchanged in the result.
         """
         state = make_state(retry_count=5, max_retries=5, error_status=True)
-        evaluator(state)
-        assert state["retry_count"] == 5
+        result = evaluator(state)
+        assert result.get("retry_count", state["retry_count"]) == 5
 
 
 # --------------------------------------------------------------------------- #
@@ -292,7 +315,8 @@ def test_property2_retry_count_increments_when_routing_to_retry(
 
     Property 2: For any AgentState where error_status=True and
     retry_count < max_retries, after evaluator routes to "retry",
-    retry_count in the state SHALL equal the original retry_count + 1.
+    retry_count in the returned state update SHALL equal the original
+    retry_count + 1.
     """
     # Only test the "retry" branch: error_status=True, retry_count < max_retries
     if retry_count >= max_retries:
@@ -308,10 +332,11 @@ def test_property2_retry_count_increments_when_routing_to_retry(
     original_count = state["retry_count"]
 
     result = evaluator(state)
+    route = _route(state, result)
 
-    assert result == "retry", (
+    assert route == "retry", (
         f"Expected 'retry' for retry_count={retry_count}, max_retries={max_retries}"
     )
-    assert state["retry_count"] == original_count + 1, (
-        f"Expected retry_count={original_count + 1}, got {state['retry_count']}"
+    assert result.get("retry_count") == original_count + 1, (
+        f"Expected retry_count={original_count + 1} in result, got {result.get('retry_count')}"
     )

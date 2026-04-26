@@ -102,6 +102,11 @@ def make_test_node(
         token_usage = token_usage.model_copy(update={"test_node": token_record})
 
         test_code: str = artifact.source_code
+        # Merge source dependencies with any extra deps declared by the test
+        # artifact (e.g. "pytest" when the runner script needs it).
+        test_dependencies: list[str] = list(
+            dict.fromkeys(dependencies + artifact.dependencies)
+        )
 
         # --- Execute and retry loop ---
         test_logs: str = ""
@@ -112,8 +117,8 @@ def make_test_node(
             runner_script = _build_runner_script(test_code, current_code, file_name)
 
             try:
-                if dependencies:
-                    sandbox.install_dependencies(dependencies)
+                if test_dependencies:
+                    sandbox.install_dependencies(test_dependencies)
 
                 result = sandbox.execute(runner_script, config.sandbox_timeout_seconds)
                 test_logs = result.combined_output
@@ -149,6 +154,10 @@ def make_test_node(
                 artifact, token_record = llm_client.generate(retry_prompt, CodeArtifact)
                 token_usage = token_usage.model_copy(update={"test_node": token_record})
                 test_code = artifact.source_code
+                # Re-merge dependencies in case the revised artifact adds new ones
+                test_dependencies = list(
+                    dict.fromkeys(dependencies + artifact.dependencies)
+                )
 
         # --- All retries exhausted ---
         warning_msg = (

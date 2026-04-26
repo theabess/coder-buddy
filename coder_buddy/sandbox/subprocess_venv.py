@@ -89,9 +89,35 @@ class SubprocessVenvBackend(SandboxBackend):
                 text=True,
             )
 
+    def _ensure_venv(self) -> str:
+        """
+        Ensure the virtual environment exists inside the temp directory.
+
+        Creates the venv if it has not been created yet (i.e. when
+        ``install_dependencies`` was not called because there were no
+        dependencies to install).
+
+        Returns:
+            The path to the temp directory containing the venv.
+        """
+        tmpdir = self._ensure_tmpdir()
+        venv_dir = Path(tmpdir) / "venv"
+        if not venv_dir.exists():
+            subprocess.run(
+                [sys.executable, "-m", "venv", str(venv_dir)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        return tmpdir
+
     def execute(self, source_code: str, timeout: float = 10.0) -> ExecutionResult:
         """
         Write *source_code* to a temp file and execute it inside the venv.
+
+        Ensures the venv exists before execution (creating it if
+        ``install_dependencies`` was not called because there were no
+        dependencies).
 
         Args:
             source_code: Python source code to execute.
@@ -100,7 +126,7 @@ class SubprocessVenvBackend(SandboxBackend):
         Returns:
             ``ExecutionResult`` populated from the subprocess outcome.
         """
-        tmpdir = self._ensure_tmpdir()
+        tmpdir = self._ensure_venv()
         script_path = Path(tmpdir) / "script.py"
         script_path.write_text(source_code, encoding="utf-8")
 

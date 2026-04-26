@@ -151,13 +151,13 @@ class TestConditionalEdges:
         return graph.graph
 
     def test_conditional_edges_defined_on_execute_node(self):
-        """execute_node has conditional edges registered."""
+        """evaluator node has conditional edges registered (evaluator is now a proper node)."""
         config = _make_config()
         graph = build_graph(_make_sandbox(), _make_llm_client(), config)
         # Use get_graph() to access the drawable graph and inspect edges
         dg = graph.get_graph()
         conditional_sources = {e.source for e in dg.edges if e.conditional}
-        assert "execute_node" in conditional_sources
+        assert "evaluator" in conditional_sources
 
     def test_evaluator_routes_retry_to_write_node(self):
         """When evaluator returns 'retry', the graph routes to write_node."""

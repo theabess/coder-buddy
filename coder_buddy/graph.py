@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from langgraph.graph import END, StateGraph
 
-from coder_buddy.nodes.evaluator import evaluator
+from coder_buddy.nodes.evaluator import evaluator, evaluator_router
 from coder_buddy.nodes.execute_node import make_execute_node
 from coder_buddy.nodes.post_process import make_post_process_node
 from coder_buddy.nodes.refactor_node import make_refactor_node
@@ -137,6 +137,7 @@ def build_graph(
     # Register nodes
     graph.add_node("write_node", write_node_fn)
     graph.add_node("execute_node", execute_node_fn)
+    graph.add_node("evaluator", evaluator)
     graph.add_node("refactor_node", refactor_node_fn)
     graph.add_node("re_execute", re_execute_node_fn)
     graph.add_node("post_process", post_process_node_fn)
@@ -151,6 +152,7 @@ def build_graph(
     # Linear edges
     # ------------------------------------------------------------------ #
     graph.add_edge("write_node", "execute_node")
+    graph.add_edge("execute_node", "evaluator")
     graph.add_edge("refactor_node", "re_execute")
     graph.add_edge("re_execute", "post_process")
 
@@ -163,11 +165,11 @@ def build_graph(
         graph.add_edge("post_process", END)
 
     # ------------------------------------------------------------------ #
-    # Conditional edges from execute_node via evaluator
+    # Conditional edges from evaluator node via evaluator_router
     # ------------------------------------------------------------------ #
     graph.add_conditional_edges(
-        "execute_node",
-        evaluator,
+        "evaluator",
+        evaluator_router,
         {
             "retry": "write_node",
             "refactor": "refactor_node",

@@ -192,6 +192,7 @@ class CoderBuddy:
             "max_retries": self._config.max_retries,
             "pre_refactor_code": None,
             "warning": None,
+            "_route": None,
         }
 
         # Invoke the compiled LangGraph state graph

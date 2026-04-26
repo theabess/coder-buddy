@@ -331,6 +331,40 @@ class TestResetClearsHistory:
         agent.run("second prompt")
         assert len(agent._history) == 1
 
+    def test_reset_preserves_maxlen(self, patched_agent):
+        """After reset(), _history.maxlen must still be 10."""
+        agent, mock_graph = patched_agent
+        mock_graph.invoke.return_value = _make_success_final_state()
+
+        # Populate history then reset
+        agent.run("first prompt")
+        agent.run("second prompt")
+        agent.reset()
+
+        assert agent._history.maxlen == 10
+
+    def test_reset_on_empty_history_preserves_maxlen(self, patched_agent):
+        """reset() on an already-empty deque must still preserve maxlen=10."""
+        agent, _ = patched_agent
+        assert len(agent._history) == 0
+
+        agent.reset()
+
+        assert agent._history.maxlen == 10
+
+    def test_reset_clears_entries_and_preserves_maxlen(self, patched_agent):
+        """After reset(), len == 0 AND maxlen == 10 simultaneously."""
+        agent, mock_graph = patched_agent
+        mock_graph.invoke.return_value = _make_success_final_state()
+
+        for _ in range(5):
+            agent.run("some prompt")
+
+        agent.reset()
+
+        assert len(agent._history) == 0
+        assert agent._history.maxlen == 10
+
 
 # --------------------------------------------------------------------------- #
 # Test 4: Unsupported language returns error without entering cycle
@@ -410,6 +444,92 @@ class TestUnsupportedLanguageEarlyExit:
         agent.run("write a JavaScript function")
 
         assert len(agent._history) == 0
+
+
+# --------------------------------------------------------------------------- #
+# Test 5: _history deque is bounded to maxlen=10 (FIFO eviction)
+# --------------------------------------------------------------------------- #
+
+class TestHistoryDequeMaxlen:
+    """Req 18.1 — _history deque is bounded to maxlen=10; oldest entry discarded (FIFO)."""
+
+    def test_history_maxlen_is_10(self, patched_agent):
+        """_history deque must have maxlen=10."""
+        agent, _ = patched_agent
+        assert agent._history.maxlen == 10
+
+    def test_history_bounded_at_10_entries(self, patched_agent):
+        """After 11 runs, _history must contain exactly 10 entries."""
+        agent, mock_graph = patched_agent
+
+        for i in range(11):
+            state = _make_success_final_state()
+            state["current_code"] = f"print({i})"
+            state["user_prompt"] = f"prompt {i}"
+            mock_graph.invoke.return_value = state
+            agent.run(f"write python script {i}")
+
+        assert len(agent._history) == 10
+
+    def test_oldest_entry_discarded_on_overflow(self, patched_agent):
+        """When 11 entries are appended, the first (oldest) entry is discarded."""
+        agent, mock_graph = patched_agent
+
+        # Run 11 times; each run produces a unique source_code we can identify
+        for i in range(11):
+            state = _make_success_final_state()
+            state["current_code"] = f"print({i})"
+            mock_graph.invoke.return_value = state
+            agent.run(f"write python script {i}")
+
+        # The oldest entry (i=0, source_code="print(0)") must be gone
+        history_codes = [entry.source_code for entry in agent._history]
+        assert "print(0)" not in history_codes
+
+    def test_most_recent_entries_retained(self, patched_agent):
+        """After 11 runs, the 10 most recent entries (indices 1–10) are retained."""
+        agent, mock_graph = patched_agent
+
+        for i in range(11):
+            state = _make_success_final_state()
+            state["current_code"] = f"print({i})"
+            mock_graph.invoke.return_value = state
+            agent.run(f"write python script {i}")
+
+        history_codes = [entry.source_code for entry in agent._history]
+        # Entries for i=1 through i=10 must all be present
+        for i in range(1, 11):
+            assert f"print({i})" in history_codes, (
+                f"Expected 'print({i})' in history but got: {history_codes}"
+            )
+
+    def test_fifo_order_preserved(self, patched_agent):
+        """Entries in _history must be in insertion order (oldest first, newest last)."""
+        agent, mock_graph = patched_agent
+
+        for i in range(5):
+            state = _make_success_final_state()
+            state["current_code"] = f"print({i})"
+            mock_graph.invoke.return_value = state
+            agent.run(f"write python script {i}")
+
+        history_codes = [entry.source_code for entry in agent._history]
+        assert history_codes == [f"print({i})" for i in range(5)]
+
+    def test_exactly_10_entries_no_eviction(self, patched_agent):
+        """Exactly 10 runs must not evict any entry."""
+        agent, mock_graph = patched_agent
+
+        for i in range(10):
+            state = _make_success_final_state()
+            state["current_code"] = f"print({i})"
+            mock_graph.invoke.return_value = state
+            agent.run(f"write python script {i}")
+
+        assert len(agent._history) == 10
+        history_codes = [entry.source_code for entry in agent._history]
+        for i in range(10):
+            assert f"print({i})" in history_codes
 
 
 # --------------------------------------------------------------------------- #
@@ -678,4 +798,455 @@ def test_property13_initial_agent_state_has_zero_retry_count_and_no_error(
     assert initial_state["error_status"] is False, (
         f"Expected initial_state['error_status'] == False, "
         f"got {initial_state['error_status']!r} for prompt={prompt!r}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Test 18.4: Integration test — two sequential agent.run() calls; second
+#            prompt references first output; verify [Reference code] block
+#            is injected in the LLM prompt for the second call.
+# --------------------------------------------------------------------------- #
+
+
+class TestSessionMemoryReferenceInjection:
+    """
+    Integration test for session memory reference injection (Req 18.4).
+
+    Verifies that when two sequential ``agent.run()`` calls are made on the
+    same ``CoderBuddy`` instance and the second prompt contains a reference
+    keyword (e.g. "the script", "previous"), the ``Write_Node`` injects a
+    ``[Reference code]`` block containing the first run's source code into
+    the LLM prompt for the second call.
+
+    The LLM client and sandbox are mocked to avoid real I/O.  The real
+    LangGraph graph and ``write_node`` are used so the prompt construction
+    logic is exercised end-to-end.
+    """
+
+    def _make_integration_config(self) -> "AgentConfig":
+        """Return a minimal AgentConfig for integration tests."""
+        return _make_config(
+            explanation_enabled=False,
+            test_generation_enabled=False,
+            diff_view_enabled=False,
+            max_retries=1,
+        )
+
+    def _make_mock_sandbox(self):
+        """
+        Return a mock sandbox that always reports a successful execution.
+
+        ``execute()`` returns an ``ExecutionResult`` with exit_code=0 so
+        the evaluator routes to ``refactor_node`` (success path).
+        """
+        from coder_buddy.sandbox.base import ExecutionResult
+
+        mock_sandbox = MagicMock()
+        mock_sandbox.health_check.return_value = None
+        mock_sandbox.install_dependencies.return_value = None
+        mock_sandbox.execute.return_value = ExecutionResult(
+            stdout="hello\n",
+            stderr="",
+            exit_code=0,
+            timed_out=False,
+        )
+        mock_sandbox.cleanup.return_value = None
+        return mock_sandbox
+
+    def _make_mock_llm_client(self, source_code: str = "print('hello')"):
+        """
+        Return a mock LLMClient whose ``generate()`` returns appropriate
+        structured outputs based on the requested output type.
+
+        - ``CodeArtifact`` requests → return a ``CodeArtifact``
+        - ``ConfidenceOutput`` requests → return a ``ConfidenceOutput``
+        """
+        from coder_buddy.models import CodeArtifact, TokenRecord
+        from coder_buddy.nodes.post_process import ConfidenceOutput
+
+        artifact = CodeArtifact(
+            source_code=source_code,
+            file_name="main.py",
+            dependencies=[],
+            language="python",
+        )
+        token_record = TokenRecord(input_tokens=100, output_tokens=50)
+        confidence_output = ConfidenceOutput(confidence_score=4)
+
+        def _generate(prompt: str, output_type):
+            if output_type is CodeArtifact:
+                return (artifact, token_record)
+            else:
+                # ConfidenceOutput or any other structured type
+                return (confidence_output, token_record)
+
+        mock_client = MagicMock()
+        mock_client.generate.side_effect = _generate
+        return mock_client
+
+    def test_reference_block_injected_in_second_run_prompt(self):
+        """
+        Core integration test: the second run's LLM prompt contains a
+        ``[Reference code]`` block with the first run's source code.
+
+        Flow:
+        1. First ``agent.run("write a hello world script")`` completes
+           successfully → ``_history`` now contains one ``HistoryEntry``
+           with ``source_code="print('hello')"``.
+        2. Second ``agent.run("make the script faster")`` is called.
+           The prompt contains "the script" (a reference keyword).
+        3. The ``Write_Node`` builds the LLM prompt with the session
+           history injected → ``[Reference code]`` block is present.
+        4. We capture the prompt passed to ``llm_client.generate`` on the
+           first call of the second run (the ``write_node`` call) and
+           assert it contains ``[Reference code — most recent script]``
+           and the first run's source code.
+        """
+        from coder_buddy.agent import CoderBuddy
+        from coder_buddy.graph import build_graph
+
+        config = self._make_integration_config()
+        mock_sandbox = self._make_mock_sandbox()
+        first_run_source_code = "print('hello')"
+        mock_llm_client = self._make_mock_llm_client(
+            source_code=first_run_source_code
+        )
+
+        # Capture all prompts passed to llm_client.generate
+        captured_prompts: list[str] = []
+        original_side_effect = mock_llm_client.generate.side_effect
+
+        def _capturing_generate(prompt: str, output_type):
+            captured_prompts.append(prompt)
+            return original_side_effect(prompt, output_type)
+
+        mock_llm_client.generate.side_effect = _capturing_generate
+
+        with (
+            patch("coder_buddy.agent._make_sandbox", return_value=mock_sandbox),
+            patch("coder_buddy.agent.LLMClient", return_value=mock_llm_client),
+            patch(
+                "coder_buddy.agent.build_graph",
+                side_effect=lambda sandbox, llm, cfg: build_graph(
+                    mock_sandbox, mock_llm_client, cfg
+                ),
+            ),
+        ):
+            agent = CoderBuddy(config)
+
+            # --- First run ---
+            result1 = agent.run("write a hello world script")
+
+            # Verify the first run succeeded and history was populated
+            assert result1.success is True, (
+                f"First run should succeed, got success={result1.success}, "
+                f"failure_reason={result1.failure_reason}"
+            )
+            assert len(agent._history) == 1, (
+                f"Expected 1 history entry after first run, got {len(agent._history)}"
+            )
+            assert agent._history[0].source_code == first_run_source_code
+
+            # Record how many generate calls happened in the first run
+            first_run_call_count = len(captured_prompts)
+
+            # --- Second run ---
+            # "the script" is a reference keyword that triggers _has_prior_reference
+            result2 = agent.run("make the script faster")
+
+            assert result2.success is True, (
+                f"Second run should succeed, got success={result2.success}, "
+                f"failure_reason={result2.failure_reason}"
+            )
+
+        # The first generate call of the second run is the write_node call.
+        # It should be at index `first_run_call_count` in captured_prompts.
+        assert len(captured_prompts) > first_run_call_count, (
+            "Expected at least one LLM call during the second run"
+        )
+        second_run_write_node_prompt = captured_prompts[first_run_call_count]
+
+        # Core assertion: the [Reference code] block must be present
+        assert "[Reference code" in second_run_write_node_prompt, (
+            f"Expected '[Reference code' block in the second run's write_node prompt.\n"
+            f"Prompt was:\n{second_run_write_node_prompt}"
+        )
+
+        # The reference block must contain the first run's source code
+        assert first_run_source_code in second_run_write_node_prompt, (
+            f"Expected first run's source code '{first_run_source_code}' in the "
+            f"second run's write_node prompt.\n"
+            f"Prompt was:\n{second_run_write_node_prompt}"
+        )
+
+        # The [End reference code] marker must also be present
+        assert "[End reference code]" in second_run_write_node_prompt, (
+            f"Expected '[End reference code]' marker in the second run's prompt.\n"
+            f"Prompt was:\n{second_run_write_node_prompt}"
+        )
+
+    def test_no_reference_block_when_second_prompt_has_no_keyword(self):
+        """
+        Negative case: when the second prompt does NOT contain a reference
+        keyword, the ``[Reference code]`` block is NOT injected even though
+        session history is non-empty.
+        """
+        from coder_buddy.agent import CoderBuddy
+        from coder_buddy.graph import build_graph
+
+        config = self._make_integration_config()
+        mock_sandbox = self._make_mock_sandbox()
+        mock_llm_client = self._make_mock_llm_client(source_code="print('hello')")
+
+        captured_prompts: list[str] = []
+        original_side_effect = mock_llm_client.generate.side_effect
+
+        def _capturing_generate(prompt: str, output_type):
+            captured_prompts.append(prompt)
+            return original_side_effect(prompt, output_type)
+
+        mock_llm_client.generate.side_effect = _capturing_generate
+
+        with (
+            patch("coder_buddy.agent._make_sandbox", return_value=mock_sandbox),
+            patch("coder_buddy.agent.LLMClient", return_value=mock_llm_client),
+            patch(
+                "coder_buddy.agent.build_graph",
+                side_effect=lambda sandbox, llm, cfg: build_graph(
+                    mock_sandbox, mock_llm_client, cfg
+                ),
+            ),
+        ):
+            agent = CoderBuddy(config)
+
+            # First run populates history
+            agent.run("write a hello world script")
+            assert len(agent._history) == 1
+
+            first_run_call_count = len(captured_prompts)
+
+            # Second run with NO reference keyword
+            agent.run("write a sorting algorithm")
+
+        # The write_node prompt for the second run should NOT have [Reference code]
+        assert len(captured_prompts) > first_run_call_count
+        second_run_write_node_prompt = captured_prompts[first_run_call_count]
+
+        assert "[Reference code" not in second_run_write_node_prompt, (
+            f"Did NOT expect '[Reference code' block when no reference keyword used.\n"
+            f"Prompt was:\n{second_run_write_node_prompt}"
+        )
+
+    def test_session_history_populated_after_first_run(self):
+        """
+        Verify that after the first ``agent.run()`` call, ``_history``
+        contains exactly one entry with the correct source code and prompt.
+        """
+        from coder_buddy.agent import CoderBuddy
+        from coder_buddy.graph import build_graph
+
+        config = self._make_integration_config()
+        mock_sandbox = self._make_mock_sandbox()
+        first_run_source_code = "print('hello world')"
+        mock_llm_client = self._make_mock_llm_client(
+            source_code=first_run_source_code
+        )
+
+        with (
+            patch("coder_buddy.agent._make_sandbox", return_value=mock_sandbox),
+            patch("coder_buddy.agent.LLMClient", return_value=mock_llm_client),
+            patch(
+                "coder_buddy.agent.build_graph",
+                side_effect=lambda sandbox, llm, cfg: build_graph(
+                    mock_sandbox, mock_llm_client, cfg
+                ),
+            ),
+        ):
+            agent = CoderBuddy(config)
+            first_prompt = "write a hello world script"
+            agent.run(first_prompt)
+
+        assert len(agent._history) == 1
+        entry = agent._history[0]
+        assert entry.source_code == first_run_source_code
+        assert entry.prompt == first_prompt
+
+    def test_reference_block_contains_correct_source_code(self):
+        """
+        Verify the ``[Reference code]`` block contains the exact source code
+        from the first run (not some other code).
+        """
+        from coder_buddy.agent import CoderBuddy
+        from coder_buddy.graph import build_graph
+        from coder_buddy.models import CodeArtifact, TokenRecord
+        from coder_buddy.nodes.post_process import ConfidenceOutput
+
+        config = self._make_integration_config()
+        mock_sandbox = self._make_mock_sandbox()
+
+        # Use a distinctive source code for the first run
+        first_run_source_code = "def fibonacci(n):\n    return n if n <= 1 else fibonacci(n-1) + fibonacci(n-2)"
+        second_run_source_code = "def fibonacci_fast(n):\n    a, b = 0, 1\n    for _ in range(n):\n        a, b = b, a + b\n    return a"
+
+        call_count = [0]
+        captured_prompts: list[str] = []
+        token_record = TokenRecord(input_tokens=100, output_tokens=50)
+        confidence_output = ConfidenceOutput(confidence_score=4)
+
+        def _generate(prompt: str, output_type):
+            captured_prompts.append(prompt)
+            call_count[0] += 1
+            if output_type is CodeArtifact:
+                # First run returns first_run_source_code; second run returns second_run_source_code
+                # We determine which run we're in by checking if history is populated
+                code = first_run_source_code if call_count[0] <= 2 else second_run_source_code
+                artifact = CodeArtifact(
+                    source_code=code,
+                    file_name="main.py",
+                    dependencies=[],
+                    language="python",
+                )
+                return (artifact, token_record)
+            else:
+                return (confidence_output, token_record)
+
+        mock_llm_client = MagicMock()
+        mock_llm_client.generate.side_effect = _generate
+
+        with (
+            patch("coder_buddy.agent._make_sandbox", return_value=mock_sandbox),
+            patch("coder_buddy.agent.LLMClient", return_value=mock_llm_client),
+            patch(
+                "coder_buddy.agent.build_graph",
+                side_effect=lambda sandbox, llm, cfg: build_graph(
+                    mock_sandbox, mock_llm_client, cfg
+                ),
+            ),
+        ):
+            agent = CoderBuddy(config)
+
+            # First run
+            agent.run("write a fibonacci function")
+            first_run_call_count = len(captured_prompts)
+
+            # Second run with reference keyword "the script"
+            agent.run("make the script faster")
+
+        # The write_node prompt for the second run
+        second_run_write_node_prompt = captured_prompts[first_run_call_count]
+
+        # The reference block must contain the first run's source code
+        assert first_run_source_code in second_run_write_node_prompt, (
+            f"Expected first run's source code in the reference block.\n"
+            f"first_run_source_code={first_run_source_code!r}\n"
+            f"Prompt was:\n{second_run_write_node_prompt}"
+        )
+
+        # Verify the reference block structure
+        ref_start = second_run_write_node_prompt.find("[Reference code")
+        ref_end = second_run_write_node_prompt.find("[End reference code]")
+        assert ref_start != -1 and ref_end != -1, (
+            "Reference block markers not found in prompt"
+        )
+        reference_section = second_run_write_node_prompt[ref_start:ref_end]
+        assert first_run_source_code in reference_section, (
+            f"First run's source code not found within the reference block section.\n"
+            f"Reference section: {reference_section!r}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Property 18: history is bounded to 10 entries and oldest entries are
+#              discarded first after k > 10 sequential agent.run() calls
+# --------------------------------------------------------------------------- #
+
+# Feature: coder-buddy, Property 18: after any number k > 10 of sequential
+# agent.run() calls, len(CoderBuddy._history) <= 10 and oldest entries are
+# discarded first.
+
+
+@given(
+    k=st.integers(min_value=11, max_value=30),
+)
+@settings(max_examples=100)
+def test_property18_history_bounded_and_fifo_after_many_runs(k: int) -> None:
+    """
+    **Validates: Requirements 10.4**
+
+    Property 18: For any number k > 10 of sequential ``agent.run()`` calls
+    on the same ``CoderBuddy`` instance:
+
+    1. ``len(CoderBuddy._history) <= 10`` — the deque never exceeds its
+       maximum capacity.
+    2. The oldest entries are discarded first (FIFO) — after k runs, the
+       history contains the k most recent entries (up to 10), not the
+       oldest ones.
+
+    Each run produces a uniquely identifiable ``source_code`` string
+    (``f"print({i})"`` for run index ``i``), so we can verify which entries
+    were retained and which were evicted.
+    """
+    from coder_buddy.agent import CoderBuddy
+
+    config = _make_config()
+
+    with (
+        patch("coder_buddy.agent._make_sandbox") as mock_make_sandbox,
+        patch("coder_buddy.agent.LLMClient"),
+        patch("coder_buddy.agent.build_graph") as mock_build_graph,
+    ):
+        mock_sandbox = MagicMock()
+        mock_sandbox.health_check.return_value = None
+        mock_make_sandbox.return_value = mock_sandbox
+
+        mock_graph = MagicMock()
+        mock_build_graph.return_value = mock_graph
+
+        agent = CoderBuddy(config)
+
+        # Run k times; each run produces a unique, identifiable source_code
+        for i in range(k):
+            state = _make_success_final_state()
+            state["current_code"] = f"print({i})"
+            state["user_prompt"] = f"prompt {i}"
+            mock_graph.invoke.return_value = state
+            agent.run(f"write python script {i}")
+
+    # --- Property assertion 1: history length never exceeds 10 ---
+    assert len(agent._history) <= 10, (
+        f"Expected len(_history) <= 10 after {k} runs, "
+        f"got {len(agent._history)}"
+    )
+
+    # --- Property assertion 2: exactly 10 entries retained (since k > 10) ---
+    assert len(agent._history) == 10, (
+        f"Expected exactly 10 entries after {k} > 10 runs, "
+        f"got {len(agent._history)}"
+    )
+
+    # --- Property assertion 3: oldest entries are discarded (FIFO) ---
+    # After k runs (k > 10), the history must contain the LAST 10 runs
+    # (indices k-10 through k-1), not the first ones (indices 0 through k-11).
+    history_codes = [entry.source_code for entry in agent._history]
+
+    # The 10 most recent entries must all be present
+    for i in range(k - 10, k):
+        assert f"print({i})" in history_codes, (
+            f"Expected recent entry 'print({i})' in history after {k} runs, "
+            f"but it was missing. History codes: {history_codes}"
+        )
+
+    # The oldest entries (indices 0 through k-11) must all be evicted
+    for i in range(k - 10):
+        assert f"print({i})" not in history_codes, (
+            f"Expected old entry 'print({i})' to be evicted after {k} runs, "
+            f"but it was still present. History codes: {history_codes}"
+        )
+
+    # --- Property assertion 4: FIFO order preserved within retained entries ---
+    # The retained entries must appear in insertion order (oldest first)
+    expected_order = [f"print({i})" for i in range(k - 10, k)]
+    assert history_codes == expected_order, (
+        f"Expected history in insertion order {expected_order}, "
+        f"got {history_codes}"
     )

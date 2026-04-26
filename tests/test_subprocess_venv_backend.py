@@ -135,6 +135,7 @@ class TestTimeoutHandling:
         with (
             patch("tempfile.mkdtemp", return_value=FAKE_TMPDIR),
             patch("pathlib.Path.write_text"),
+            patch("pathlib.Path.exists", return_value=True),
             patch("subprocess.run", side_effect=self._make_timeout_exc()),
         ):
             backend = SubprocessVenvBackend()
@@ -147,6 +148,7 @@ class TestTimeoutHandling:
         with (
             patch("tempfile.mkdtemp", return_value=FAKE_TMPDIR),
             patch("pathlib.Path.write_text"),
+            patch("pathlib.Path.exists", return_value=True),
             patch("subprocess.run", side_effect=self._make_timeout_exc()),
         ):
             backend = SubprocessVenvBackend()
@@ -159,6 +161,7 @@ class TestTimeoutHandling:
         with (
             patch("tempfile.mkdtemp", return_value=FAKE_TMPDIR),
             patch("pathlib.Path.write_text"),
+            patch("pathlib.Path.exists", return_value=True),
             patch("subprocess.run", side_effect=self._make_timeout_exc()),
         ):
             backend = SubprocessVenvBackend()
@@ -172,6 +175,7 @@ class TestTimeoutHandling:
         with (
             patch("tempfile.mkdtemp", return_value=FAKE_TMPDIR),
             patch("pathlib.Path.write_text"),
+            patch("pathlib.Path.exists", return_value=True),
             patch("subprocess.run", side_effect=exc),
         ):
             backend = SubprocessVenvBackend()
@@ -185,6 +189,7 @@ class TestTimeoutHandling:
         with (
             patch("tempfile.mkdtemp", return_value=FAKE_TMPDIR),
             patch("pathlib.Path.write_text"),
+            patch("pathlib.Path.exists", return_value=True),
             patch("subprocess.run", side_effect=exc),
         ):
             backend = SubprocessVenvBackend()
@@ -201,6 +206,7 @@ class TestTimeoutHandling:
         with (
             patch("tempfile.mkdtemp", return_value=FAKE_TMPDIR),
             patch("pathlib.Path.write_text"),
+            patch("pathlib.Path.exists", return_value=True),
             patch("subprocess.run", side_effect=exc),
         ):
             backend = SubprocessVenvBackend()

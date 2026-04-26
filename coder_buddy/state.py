@@ -89,3 +89,7 @@ class AgentState(TypedDict):
     warning: "str | None"
     """Optional warning message set when a fallback or degraded path is taken
     (e.g. refactored code failed re-execution, refactor timed out)."""
+
+    _route: "str | None"
+    """Internal routing decision set by the evaluator node.
+    One of ``"retry"``, ``"refactor"``, or ``"fail"``."""
