@@ -25,7 +25,7 @@ from coder_buddy.config import (
 # --------------------------------------------------------------------------- #
 
 VALID_DEFAULTS = {
-    "llm_backend": "gemini-1.5-pro",
+    "llm_backend": "gemini-2.5-flash",
     "sandbox_backend": "subprocess+venv",
     "max_retries": 5,
 }
@@ -175,8 +175,8 @@ class TestSandboxBackendValidNames:
 
 class TestLLMBackendValidNames:
     def test_gemini_1_5_pro(self):
-        cfg = make_config(llm_backend="gemini-1.5-pro")
-        assert cfg.llm_backend == "gemini-1.5-pro"
+        cfg = make_config(llm_backend="gemini-2.5-flash")
+        assert cfg.llm_backend == "gemini-2.5-flash"
 
     def test_gpt_4o(self):
         cfg = make_config(llm_backend="gpt-4o")

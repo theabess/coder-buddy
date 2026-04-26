@@ -166,13 +166,13 @@ class TestTokenRecordCostEstimation:
     # the class self-contained and readable.
     # ------------------------------------------------------------------
 
-    def test_gemini_1_5_pro_pricing(self):
-        """1000 input + 500 output tokens with gemini-1.5-pro prices."""
+    def test_gemini_2_5_flash_pricing(self):
+        """1000 input + 500 output tokens with gemini-2.5-flash prices."""
         from coder_buddy.llm.pricing import estimate_cost, KNOWN_PRICES
 
-        cost = estimate_cost("gemini-1.5-pro", 1000, 500)
-        # (1000 * 0.00125/1000) + (500 * 0.005/1000) = 0.00125 + 0.0025
-        assert cost == pytest.approx(0.00375)
+        cost = estimate_cost("gemini-2.5-flash", 1000, 500)
+        # (1000 * 0.00015/1000) + (500 * 0.0006/1000) = 0.00015 + 0.0003
+        assert cost == pytest.approx(0.00045)
 
     def test_gpt_4o_pricing(self):
         """2000 input + 1000 output tokens with gpt-4o prices."""
@@ -194,7 +194,7 @@ class TestTokenRecordCostEstimation:
         """Any model with zero tokens should produce a cost of 0.0."""
         from coder_buddy.llm.pricing import estimate_cost
 
-        for model in ("gemini-1.5-pro", "gpt-4o", "claude-3-5-sonnet"):
+        for model in ("gemini-2.5-flash", "gpt-4o", "claude-3-5-sonnet"):
             cost = estimate_cost(model, 0, 0)
             assert cost == pytest.approx(0.0), f"Expected 0.0 for {model} with zero tokens"
 
@@ -225,7 +225,7 @@ class TestTokenRecordCostEstimation:
         """KNOWN_PRICES contains all three expected model keys."""
         from coder_buddy.llm.pricing import KNOWN_PRICES
 
-        assert "gemini-1.5-pro" in KNOWN_PRICES
+        assert "gemini-2.5-flash" in KNOWN_PRICES
         assert "gpt-4o" in KNOWN_PRICES
         assert "claude-3-5-sonnet" in KNOWN_PRICES
 
@@ -277,13 +277,13 @@ class TestTokenRecordCostEstimation:
         from coder_buddy.llm.pricing import estimate_cost
         from coder_buddy.models import TokenRecord
 
-        computed = estimate_cost("gemini-1.5-pro", 1000, 500)
+        computed = estimate_cost("gemini-2.5-flash", 1000, 500)
         record = TokenRecord(
             input_tokens=1000,
             output_tokens=500,
             estimated_cost_usd=computed,
         )
-        assert record.estimated_cost_usd == pytest.approx(0.00375)
+        assert record.estimated_cost_usd == pytest.approx(0.00045)
         assert record.input_tokens == 1000
         assert record.output_tokens == 500
 

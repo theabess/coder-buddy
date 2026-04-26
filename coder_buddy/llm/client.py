@@ -37,14 +37,16 @@ except ImportError:
 
 # Map of model names to environment variable names for API keys
 _MODEL_ENV_VARS: dict[str, str] = {
-    "gemini-1.5-pro": "GEMINI_API_KEY",
+    "gemini-2.5-flash": "GEMINI_API_KEY",
+    "gemini-2.5-pro": "GEMINI_API_KEY",
     "gpt-4o": "OPENAI_API_KEY",
     "claude-3-5-sonnet": "ANTHROPIC_API_KEY",
 }
 
 # Map of model names to pydantic-ai model strings
 _MODEL_STRINGS: dict[str, str] = {
-    "gemini-1.5-pro": "google-gla:gemini-1.5-pro",
+    "gemini-2.5-flash": "google-gla:gemini-2.5-flash",
+    "gemini-2.5-pro": "google-gla:gemini-2.5-pro",
     "gpt-4o": "openai:gpt-4o",
     "claude-3-5-sonnet": "anthropic:claude-3-5-sonnet-latest",
 }

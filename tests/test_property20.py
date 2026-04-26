@@ -81,7 +81,7 @@ def _build_prop20_agent():
     from coder_buddy.agent import CoderBuddy
 
     config = AgentConfig(
-        llm_backend="gemini-1.5-pro",
+        llm_backend="gemini-2.5-flash",
         sandbox_backend="subprocess+venv",
         max_retries=3,
         explanation_enabled=False,

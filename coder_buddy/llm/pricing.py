@@ -10,9 +10,10 @@ from __future__ import annotations
 
 # model_name → (price_per_1k_input_tokens, price_per_1k_output_tokens)
 KNOWN_PRICES: dict[str, tuple[float, float]] = {
-    "gemini-1.5-pro": (0.00125, 0.005),
-    "gpt-4o": (0.005, 0.015),
-    "claude-3-5-sonnet": (0.003, 0.015),
+    "gemini-2.5-flash": (0.00015, 0.0006),   # non-thinking tier
+    "gemini-2.5-pro":   (0.00125, 0.010),
+    "gpt-4o":           (0.005,   0.015),
+    "claude-3-5-sonnet": (0.003,  0.015),
 }
 
 

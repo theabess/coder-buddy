@@ -66,7 +66,7 @@ class TestSuccessfulParse:
             MockAgent.return_value = mock_agent_instance
             mock_agent_instance.run_sync.return_value = mock_result
 
-            client = LLMClient(model="gemini-1.5-pro")
+            client = LLMClient(model="gemini-2.5-flash")
             artifact, token_record = client.generate(VALID_PROMPT, CodeArtifact)
 
         assert artifact is VALID_ARTIFACT
@@ -83,11 +83,11 @@ class TestSuccessfulParse:
             MockAgent.return_value = mock_agent_instance
             mock_agent_instance.run_sync.return_value = mock_result
 
-            client = LLMClient(model="gemini-1.5-pro")
+            client = LLMClient(model="gemini-2.5-flash")
             client.generate(VALID_PROMPT, CodeArtifact, max_retries=3)
 
         MockAgent.assert_called_once_with(
-            model="google-gla:gemini-1.5-pro",
+            model="google-gla:gemini-2.5-flash",
             output_type=CodeArtifact,
             retries=3,
         )
@@ -119,12 +119,12 @@ class TestSuccessfulParse:
             MockAgent.return_value = mock_agent_instance
             mock_agent_instance.run_sync.return_value = mock_result
 
-            client = LLMClient(model="gemini-1.5-pro")
+            client = LLMClient(model="gemini-2.5-flash")
             _, token_record = client.generate(VALID_PROMPT, CodeArtifact)
 
-        # gemini-1.5-pro: 0.00125/1k input, 0.005/1k output
-        # cost = (1000 * 0.00125/1000) + (500 * 0.005/1000) = 0.00125 + 0.0025 = 0.00375
-        assert token_record.estimated_cost_usd == pytest.approx(0.00375)
+        # gemini-2.5-flash: 0.00015/1k input, 0.0006/1k output
+        # cost = (1000 * 0.00015/1000) + (500 * 0.0006/1000) = 0.00015 + 0.0003 = 0.00045
+        assert token_record.estimated_cost_usd == pytest.approx(0.00045)
 
     def test_run_sync_called_with_prompt(self):
         """agent.run_sync is called with the provided prompt."""
@@ -135,7 +135,7 @@ class TestSuccessfulParse:
             MockAgent.return_value = mock_agent_instance
             mock_agent_instance.run_sync.return_value = mock_result
 
-            client = LLMClient(model="gemini-1.5-pro")
+            client = LLMClient(model="gemini-2.5-flash")
             client.generate(VALID_PROMPT, CodeArtifact)
 
         mock_agent_instance.run_sync.assert_called_once_with(VALID_PROMPT)
@@ -154,7 +154,7 @@ class TestSuccessfulParse:
             MockAgent.return_value = mock_agent_instance
             mock_agent_instance.run_sync.return_value = mock_result
 
-            client = LLMClient(model="gemini-1.5-pro")
+            client = LLMClient(model="gemini-2.5-flash")
             _, token_record = client.generate(VALID_PROMPT, CodeArtifact)
 
         assert token_record.input_tokens == 0
@@ -178,7 +178,7 @@ class TestParseErrorAfterRetries:
                 "Model failed to produce valid output after 3 retries"
             )
 
-            client = LLMClient(model="gemini-1.5-pro")
+            client = LLMClient(model="gemini-2.5-flash")
             with pytest.raises(ParseError) as exc_info:
                 client.generate(VALID_PROMPT, CodeArtifact, max_retries=3)
 
@@ -209,7 +209,7 @@ class TestParseErrorAfterRetries:
             MockAgent.return_value = mock_agent_instance
             mock_agent_instance.run_sync.side_effect = original_exc
 
-            client = LLMClient(model="gemini-1.5-pro")
+            client = LLMClient(model="gemini-2.5-flash")
             with pytest.raises(ParseError) as exc_info:
                 client.generate(VALID_PROMPT, CodeArtifact)
 
@@ -224,12 +224,12 @@ class TestParseErrorAfterRetries:
             MockAgent.return_value = mock_agent_instance
             mock_agent_instance.run_sync.side_effect = UnexpectedModelBehavior("fail")
 
-            client = LLMClient(model="gemini-1.5-pro")
+            client = LLMClient(model="gemini-2.5-flash")
             with pytest.raises(ParseError):
                 client.generate(VALID_PROMPT, CodeArtifact, max_retries=5)
 
         MockAgent.assert_called_once_with(
-            model="google-gla:gemini-1.5-pro",
+            model="google-gla:gemini-2.5-flash",
             output_type=CodeArtifact,
             retries=5,
         )
@@ -263,7 +263,7 @@ class TestParseRetryBehavior:
             # After 1 internal retry, pydantic-ai returns a valid result
             mock_agent_instance.run_sync.return_value = mock_result
 
-            client = LLMClient(model="gemini-1.5-pro")
+            client = LLMClient(model="gemini-2.5-flash")
             artifact, token_record = client.generate(VALID_PROMPT, CodeArtifact, max_retries=3)
 
         assert artifact is VALID_ARTIFACT
@@ -271,7 +271,7 @@ class TestParseRetryBehavior:
         assert token_record.output_tokens == 60
         # Agent was created with retries=3 so pydantic-ai can retry up to 3 times
         MockAgent.assert_called_once_with(
-            model="google-gla:gemini-1.5-pro",
+            model="google-gla:gemini-2.5-flash",
             output_type=CodeArtifact,
             retries=3,
         )
@@ -309,12 +309,12 @@ class TestParseRetryBehavior:
             MockAgent.return_value = mock_agent_instance
             mock_agent_instance.run_sync.side_effect = UnexpectedModelBehavior("fail")
 
-            client = LLMClient(model="gemini-1.5-pro")
+            client = LLMClient(model="gemini-2.5-flash")
             with pytest.raises(ParseError):
                 client.generate(VALID_PROMPT, CodeArtifact, max_retries=1)
 
         MockAgent.assert_called_once_with(
-            model="google-gla:gemini-1.5-pro",
+            model="google-gla:gemini-2.5-flash",
             output_type=CodeArtifact,
             retries=1,
         )
@@ -328,12 +328,12 @@ class TestParseRetryBehavior:
             MockAgent.return_value = mock_agent_instance
             mock_agent_instance.run_sync.side_effect = UnexpectedModelBehavior("fail after 2")
 
-            client = LLMClient(model="gemini-1.5-pro")
+            client = LLMClient(model="gemini-2.5-flash")
             with pytest.raises(ParseError):
                 client.generate(VALID_PROMPT, CodeArtifact, max_retries=2)
 
         MockAgent.assert_called_once_with(
-            model="google-gla:gemini-1.5-pro",
+            model="google-gla:gemini-2.5-flash",
             output_type=CodeArtifact,
             retries=2,
         )
@@ -349,14 +349,14 @@ class TestLLMUnavailableErrorOnHTTPError:
         """ModelHTTPError from pydantic-ai is converted to LLMUnavailableError."""
         from pydantic_ai.exceptions import ModelHTTPError
 
-        http_error = ModelHTTPError(status_code=429, model_name="gemini-1.5-pro", body="rate limited")
+        http_error = ModelHTTPError(status_code=429, model_name="gemini-2.5-flash", body="rate limited")
 
         with patch("coder_buddy.llm.client.Agent") as MockAgent:
             mock_agent_instance = MagicMock()
             MockAgent.return_value = mock_agent_instance
             mock_agent_instance.run_sync.side_effect = http_error
 
-            client = LLMClient(model="gemini-1.5-pro")
+            client = LLMClient(model="gemini-2.5-flash")
             with pytest.raises(LLMUnavailableError) as exc_info:
                 client.generate(VALID_PROMPT, CodeArtifact)
 
@@ -436,10 +436,10 @@ class TestLLMUnavailableErrorOnHTTPError:
             mock_agent_instance = MagicMock()
             MockAgent.return_value = mock_agent_instance
             mock_agent_instance.run_sync.side_effect = ModelHTTPError(
-                status_code=500, model_name="gemini-1.5-pro", body="internal server error"
+                status_code=500, model_name="gemini-2.5-flash", body="internal server error"
             )
 
-            client = LLMClient(model="gemini-1.5-pro")
+            client = LLMClient(model="gemini-2.5-flash")
             with pytest.raises(LLMUnavailableError) as exc_info:
                 client.generate(VALID_PROMPT, CodeArtifact)
 
@@ -459,7 +459,7 @@ class TestLLMUnavailableErrorOnNetworkError:
             MockAgent.return_value = mock_agent_instance
             mock_agent_instance.run_sync.side_effect = ConnectionError("Connection refused")
 
-            client = LLMClient(model="gemini-1.5-pro")
+            client = LLMClient(model="gemini-2.5-flash")
             with pytest.raises(LLMUnavailableError):
                 client.generate(VALID_PROMPT, CodeArtifact)
 
@@ -483,13 +483,13 @@ class TestLLMUnavailableErrorOnNetworkError:
 class TestLLMClientInit:
     def test_init_sets_model(self):
         """LLMClient stores the model name."""
-        client = LLMClient(model="gemini-1.5-pro")
-        assert client._model == "gemini-1.5-pro"
+        client = LLMClient(model="gemini-2.5-flash")
+        assert client._model == "gemini-2.5-flash"
 
     def test_init_resolves_model_string_gemini(self):
-        """gemini-1.5-pro resolves to google-gla:gemini-1.5-pro."""
-        client = LLMClient(model="gemini-1.5-pro")
-        assert client._model_string == "google-gla:gemini-1.5-pro"
+        """gemini-2.5-flash resolves to google-gla:gemini-2.5-flash."""
+        client = LLMClient(model="gemini-2.5-flash")
+        assert client._model_string == "google-gla:gemini-2.5-flash"
 
     def test_init_resolves_model_string_gpt4o(self):
         """gpt-4o resolves to openai:gpt-4o."""
@@ -510,14 +510,14 @@ class TestLLMClientInit:
         """When api_key is provided, it is set in the environment."""
         import os
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-        LLMClient(model="gemini-1.5-pro", api_key="test-key-123")
+        LLMClient(model="gemini-2.5-flash", api_key="test-key-123")
         assert os.environ.get("GEMINI_API_KEY") == "test-key-123"
 
     def test_init_no_api_key_does_not_set_env(self, monkeypatch):
         """When api_key is None, the environment variable is not modified."""
         import os
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-        LLMClient(model="gemini-1.5-pro", api_key=None)
+        LLMClient(model="gemini-2.5-flash", api_key=None)
         assert os.environ.get("GEMINI_API_KEY") is None
 
 
@@ -541,7 +541,7 @@ class TestTokenRecordPositiveTokens:
             MockAgent.return_value = mock_agent_instance
             mock_agent_instance.run_sync.return_value = mock_result
 
-            client = LLMClient(model="gemini-1.5-pro")
+            client = LLMClient(model="gemini-2.5-flash")
             _, token_record = client.generate(VALID_PROMPT, CodeArtifact)
 
         assert token_record.input_tokens > 0, (
@@ -557,7 +557,7 @@ class TestTokenRecordPositiveTokens:
             MockAgent.return_value = mock_agent_instance
             mock_agent_instance.run_sync.return_value = mock_result
 
-            client = LLMClient(model="gemini-1.5-pro")
+            client = LLMClient(model="gemini-2.5-flash")
             _, token_record = client.generate(VALID_PROMPT, CodeArtifact)
 
         assert token_record.output_tokens > 0, (
@@ -607,7 +607,7 @@ class TestTokenRecordPositiveTokens:
             MockAgent.return_value = mock_agent_instance
             mock_agent_instance.run_sync.return_value = mock_result
 
-            client = LLMClient(model="gemini-1.5-pro")
+            client = LLMClient(model="gemini-2.5-flash")
             _, token_record = client.generate(VALID_PROMPT, CodeArtifact)
 
         assert token_record.input_tokens == input_tokens
@@ -624,7 +624,7 @@ class TestTokenRecordPositiveTokens:
             MockAgent.return_value = mock_agent_instance
             mock_agent_instance.run_sync.return_value = mock_result
 
-            client = LLMClient(model="gemini-1.5-pro")
+            client = LLMClient(model="gemini-2.5-flash")
             _, token_record = client.generate(VALID_PROMPT, CodeArtifact)
 
         assert token_record.input_tokens > 0
@@ -640,6 +640,6 @@ class TestPydanticAINotInstalled:
     def test_raises_llm_unavailable_when_agent_is_none(self):
         """When pydantic-ai is not installed (Agent=None), LLMUnavailableError is raised."""
         with patch("coder_buddy.llm.client.Agent", None):
-            client = LLMClient(model="gemini-1.5-pro")
+            client = LLMClient(model="gemini-2.5-flash")
             with pytest.raises(LLMUnavailableError, match="pydantic-ai is not installed"):
                 client.generate(VALID_PROMPT, CodeArtifact)

@@ -84,7 +84,7 @@ def _make_mock_llm_client(
 def _make_integration_config(**overrides) -> AgentConfig:
     """AgentConfig for integration tests (real subprocess+venv, LLM mocked)."""
     defaults = {
-        "llm_backend": "gemini-1.5-pro",
+        "llm_backend": "gemini-2.5-flash",
         "sandbox_backend": "subprocess+venv",
         "max_retries": 3,
         "explanation_enabled": False,

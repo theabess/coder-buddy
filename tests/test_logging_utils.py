@@ -543,7 +543,7 @@ class TestTask22RunSummaryLogEntry:
     def _make_config(self, **overrides):
         from coder_buddy.config import AgentConfig
         defaults = {
-            "llm_backend": "gemini-1.5-pro",
+            "llm_backend": "gemini-2.5-flash",
             "sandbox_backend": "subprocess+venv",
             "max_retries": 3,
             "explanation_enabled": False,

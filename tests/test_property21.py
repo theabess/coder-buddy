@@ -58,7 +58,7 @@ _VALID_ARTIFACT = CodeArtifact(
 )
 
 _DEFAULT_CONFIG = AgentConfig(
-    llm_backend="gemini-1.5-pro",
+    llm_backend="gemini-2.5-flash",
     sandbox_backend="subprocess+venv",
     max_retries=3,
     explanation_enabled=True,
@@ -377,7 +377,7 @@ def test_property21_post_process_confidence_only_token_record_positive(
     )
 
     config_no_explanation = AgentConfig(
-        llm_backend="gemini-1.5-pro",
+        llm_backend="gemini-2.5-flash",
         sandbox_backend="subprocess+venv",
         max_retries=3,
         explanation_enabled=False,

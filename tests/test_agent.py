@@ -36,7 +36,7 @@ from coder_buddy.models import AgentResponse, TokenUsage
 def _make_config(**overrides) -> AgentConfig:
     """Return a minimal AgentConfig suitable for unit tests."""
     defaults = {
-        "llm_backend": "gemini-1.5-pro",
+        "llm_backend": "gemini-2.5-flash",
         "sandbox_backend": "subprocess+venv",
         "max_retries": 3,
         "explanation_enabled": False,
@@ -1432,7 +1432,7 @@ class TestTokenUsageEndToEndWithRealGraph:
 
     def _make_integration_config(self, **overrides) -> "AgentConfig":
         defaults = {
-            "llm_backend": "gemini-1.5-pro",
+            "llm_backend": "gemini-2.5-flash",
             "sandbox_backend": "subprocess+venv",
             "max_retries": 1,
             "explanation_enabled": False,

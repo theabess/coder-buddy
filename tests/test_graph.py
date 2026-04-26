@@ -26,7 +26,7 @@ from coder_buddy.graph import _make_re_execute_node, build_graph
 def _make_config(**kwargs) -> AgentConfig:
     """Return an ``AgentConfig`` with sensible defaults, overridable via kwargs."""
     defaults = {
-        "llm_backend": "gemini-1.5-pro",
+        "llm_backend": "gemini-2.5-flash",
         "sandbox_backend": "subprocess+venv",
         "max_retries": 3,
     }

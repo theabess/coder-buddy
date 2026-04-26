@@ -53,7 +53,7 @@ VALID_SANDBOX_BACKENDS: frozenset[str] = frozenset(
 )
 
 VALID_LLM_BACKENDS: frozenset[str] = frozenset(
-    {"gemini-1.5-pro", "gpt-4o", "claude-3-5-sonnet"}
+    {"gemini-2.5-flash", "gemini-2.5-pro", "gpt-4o", "claude-3-5-sonnet"}
 )
 
 
@@ -74,9 +74,9 @@ class AgentConfig:
     """
 
     # LLM
-    llm_backend: str = "gemini-1.5-pro"
-    """LLM model name.  One of ``"gemini-1.5-pro"``, ``"gpt-4o"``,
-    ``"claude-3-5-sonnet"``."""
+    llm_backend: str = "gemini-2.5-flash"
+    """LLM model name.  One of ``"gemini-2.5-flash"``, ``"gemini-2.5-pro"``,
+    ``"gpt-4o"``, ``"claude-3-5-sonnet"``."""
 
     llm_api_key: str | None = None
     """Optional API key; falls back to the relevant environment variable."""

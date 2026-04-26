@@ -14,7 +14,7 @@ Built on [LangGraph](https://github.com/langchain-ai/langgraph) for workflow orc
 
 - **Self-correcting loop** — automatically retries on execution errors, feeding logs back to the LLM
 - **Pluggable sandbox backends** — `subprocess+venv` (default), Docker, E2B, or Pyodide
-- **Multiple LLM backends** — Gemini 1.5 Pro (default), GPT-4o, Claude 3.5 Sonnet
+- **Multiple LLM backends** — Gemini 2.5 Flash (default), Gemini 2.5 Pro, GPT-4o, Claude 3.5 Sonnet
 - **Code refactoring** — cleans up and comments working code before delivery
 - **Explanation mode** — plain-language description of what the code does
 - **Automated test generation** — generates and runs a pytest suite for the final code
@@ -76,7 +76,8 @@ E2B_API_KEY=your-e2b-key-here   # only needed for the e2b sandbox backend
 
 | LLM backend | Environment variable |
 |---|---|
-| `gemini-1.5-pro` (default) | `GEMINI_API_KEY` |
+| `gemini-2.5-flash` (default) | `GEMINI_API_KEY` |
+| `gemini-2.5-pro` | `GEMINI_API_KEY` |
 | `gpt-4o` | `OPENAI_API_KEY` |
 | `claude-3-5-sonnet` | `ANTHROPIC_API_KEY` |
 
@@ -147,7 +148,7 @@ from coder_buddy.config import AgentConfig
 
 config = AgentConfig(
     # LLM backend
-    llm_backend="gemini-1.5-pro",   # "gemini-1.5-pro" | "gpt-4o" | "claude-3-5-sonnet"
+    llm_backend="gemini-2.5-flash",  # "gemini-2.5-flash" | "gemini-2.5-pro" | "gpt-4o" | "claude-3-5-sonnet"
     llm_api_key=None,               # or pass key directly; falls back to env var
 
     # Sandbox backend
