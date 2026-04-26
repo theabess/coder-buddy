@@ -547,3 +547,112 @@ class TestProperty25LowScoreAlwaysHasWarning:
         assert warning is None, (
             f"Expected no warning for confidence_score={clamped_score}, got: {warning!r}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Token accumulation via model_copy(update=...) — task 20.2
+# --------------------------------------------------------------------------- #
+
+
+class TestPostProcessNodeTokenUsageAccumulation:
+    """
+    Verify that post_process_node correctly accumulates its TokenRecords into
+    AgentState.token_usage using model_copy(update=...) for both the
+    explanation and confidence fields.
+    """
+
+    def test_token_usage_prior_values_preserved_explanation_disabled(self):
+        """
+        When explanation is disabled, only the confidence field is updated;
+        all other prior token values are preserved.
+        """
+        prior_usage = TokenUsage(
+            write_node=TokenRecord(input_tokens=500, output_tokens=250),
+            refactor_node=TokenRecord(input_tokens=300, output_tokens=150),
+        )
+        mock_client = _make_mock_llm_client(confidence_score=4)
+        config = _make_mock_config(explanation_enabled=False)
+        node = make_post_process_node(mock_client, config)
+        state = _make_state(token_usage=prior_usage)
+
+        with patch("coder_buddy.nodes.post_process.log_node_event"):
+            result = node(state)
+
+        usage = result["token_usage"]
+        # confidence updated
+        assert usage.confidence.input_tokens == 80
+        assert usage.confidence.output_tokens == 10
+        # explanation not touched (disabled)
+        assert usage.explanation.input_tokens == 0
+        assert usage.explanation.output_tokens == 0
+        # prior values preserved
+        assert usage.write_node.input_tokens == 500
+        assert usage.write_node.output_tokens == 250
+        assert usage.refactor_node.input_tokens == 300
+        assert usage.refactor_node.output_tokens == 150
+
+    def test_token_usage_prior_values_preserved_explanation_enabled(self):
+        """
+        When explanation is enabled, both explanation and confidence fields are
+        updated; all other prior token values are preserved.
+        """
+        prior_usage = TokenUsage(
+            write_node=TokenRecord(input_tokens=400, output_tokens=200),
+            test_node=TokenRecord(input_tokens=150, output_tokens=75),
+        )
+        mock_client = _make_mock_llm_client(confidence_score=3)
+        config = _make_mock_config(explanation_enabled=True)
+        node = make_post_process_node(mock_client, config)
+        state = _make_state(token_usage=prior_usage)
+
+        with patch("coder_buddy.nodes.post_process.log_node_event"):
+            result = node(state)
+
+        usage = result["token_usage"]
+        # explanation and confidence updated
+        assert usage.explanation.input_tokens == 100
+        assert usage.explanation.output_tokens == 50
+        assert usage.confidence.input_tokens == 80
+        assert usage.confidence.output_tokens == 10
+        # prior values preserved
+        assert usage.write_node.input_tokens == 400
+        assert usage.write_node.output_tokens == 200
+        assert usage.test_node.input_tokens == 150
+        assert usage.test_node.output_tokens == 75
+
+    def test_token_usage_is_new_object_not_same_reference(self):
+        """
+        post_process_node creates a new TokenUsage via model_copy, so the
+        returned token_usage is a different object from the input state's.
+        """
+        mock_client = _make_mock_llm_client(confidence_score=4)
+        config = _make_mock_config(explanation_enabled=False)
+        node = make_post_process_node(mock_client, config)
+        original_usage = TokenUsage()
+        state = _make_state(token_usage=original_usage)
+
+        with patch("coder_buddy.nodes.post_process.log_node_event"):
+            result = node(state)
+
+        assert result["token_usage"] is not original_usage
+
+    def test_token_usage_other_fields_unchanged_when_explanation_disabled(self):
+        """
+        With explanation disabled and a fresh TokenUsage, only confidence is
+        non-zero; write_node, refactor_node, explanation, and test_node remain zero.
+        """
+        mock_client = _make_mock_llm_client(confidence_score=4)
+        config = _make_mock_config(explanation_enabled=False)
+        node = make_post_process_node(mock_client, config)
+        state = _make_state()
+
+        with patch("coder_buddy.nodes.post_process.log_node_event"):
+            result = node(state)
+
+        usage = result["token_usage"]
+        assert usage.write_node.input_tokens == 0
+        assert usage.refactor_node.input_tokens == 0
+        assert usage.explanation.input_tokens == 0
+        assert usage.test_node.input_tokens == 0
+        # confidence is the only updated field
+        assert usage.confidence.input_tokens == 80

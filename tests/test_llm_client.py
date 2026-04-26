@@ -522,6 +522,116 @@ class TestLLMClientInit:
 
 
 # ---------------------------------------------------------------------------
+# Test: TokenRecord has input_tokens > 0 and output_tokens > 0 (Task 20.1)
+# ---------------------------------------------------------------------------
+
+
+class TestTokenRecordPositiveTokens:
+    """
+    Verify that every successful LLMClient.generate() call returns a
+    TokenRecord with input_tokens > 0 and output_tokens > 0.
+    """
+
+    def test_token_record_input_tokens_positive(self):
+        """input_tokens > 0 when LLM returns non-zero usage."""
+        mock_result = _make_run_result(VALID_ARTIFACT, input_tokens=150, output_tokens=60)
+
+        with patch("coder_buddy.llm.client.Agent") as MockAgent:
+            mock_agent_instance = MagicMock()
+            MockAgent.return_value = mock_agent_instance
+            mock_agent_instance.run_sync.return_value = mock_result
+
+            client = LLMClient(model="gemini-1.5-pro")
+            _, token_record = client.generate(VALID_PROMPT, CodeArtifact)
+
+        assert token_record.input_tokens > 0, (
+            f"Expected input_tokens > 0, got {token_record.input_tokens}"
+        )
+
+    def test_token_record_output_tokens_positive(self):
+        """output_tokens > 0 when LLM returns non-zero usage."""
+        mock_result = _make_run_result(VALID_ARTIFACT, input_tokens=150, output_tokens=60)
+
+        with patch("coder_buddy.llm.client.Agent") as MockAgent:
+            mock_agent_instance = MagicMock()
+            MockAgent.return_value = mock_agent_instance
+            mock_agent_instance.run_sync.return_value = mock_result
+
+            client = LLMClient(model="gemini-1.5-pro")
+            _, token_record = client.generate(VALID_PROMPT, CodeArtifact)
+
+        assert token_record.output_tokens > 0, (
+            f"Expected output_tokens > 0, got {token_record.output_tokens}"
+        )
+
+    def test_token_record_both_tokens_positive_gpt4o(self):
+        """Both input_tokens and output_tokens > 0 for gpt-4o model."""
+        mock_result = _make_run_result(VALID_ARTIFACT, input_tokens=500, output_tokens=200)
+
+        with patch("coder_buddy.llm.client.Agent") as MockAgent:
+            mock_agent_instance = MagicMock()
+            MockAgent.return_value = mock_agent_instance
+            mock_agent_instance.run_sync.return_value = mock_result
+
+            client = LLMClient(model="gpt-4o")
+            _, token_record = client.generate(VALID_PROMPT, CodeArtifact)
+
+        assert token_record.input_tokens > 0
+        assert token_record.output_tokens > 0
+
+    def test_token_record_both_tokens_positive_claude(self):
+        """Both input_tokens and output_tokens > 0 for claude-3-5-sonnet model."""
+        mock_result = _make_run_result(VALID_ARTIFACT, input_tokens=300, output_tokens=120)
+
+        with patch("coder_buddy.llm.client.Agent") as MockAgent:
+            mock_agent_instance = MagicMock()
+            MockAgent.return_value = mock_agent_instance
+            mock_agent_instance.run_sync.return_value = mock_result
+
+            client = LLMClient(model="claude-3-5-sonnet")
+            _, token_record = client.generate(VALID_PROMPT, CodeArtifact)
+
+        assert token_record.input_tokens > 0
+        assert token_record.output_tokens > 0
+
+    def test_token_record_reflects_exact_usage_values(self):
+        """TokenRecord accurately reflects the exact token counts from LLM usage."""
+        input_tokens = 1234
+        output_tokens = 567
+        mock_result = _make_run_result(
+            VALID_ARTIFACT, input_tokens=input_tokens, output_tokens=output_tokens
+        )
+
+        with patch("coder_buddy.llm.client.Agent") as MockAgent:
+            mock_agent_instance = MagicMock()
+            MockAgent.return_value = mock_agent_instance
+            mock_agent_instance.run_sync.return_value = mock_result
+
+            client = LLMClient(model="gemini-1.5-pro")
+            _, token_record = client.generate(VALID_PROMPT, CodeArtifact)
+
+        assert token_record.input_tokens == input_tokens
+        assert token_record.output_tokens == output_tokens
+        assert token_record.input_tokens > 0
+        assert token_record.output_tokens > 0
+
+    def test_token_record_minimum_positive_values(self):
+        """TokenRecord with minimum positive values (1 each) satisfies > 0."""
+        mock_result = _make_run_result(VALID_ARTIFACT, input_tokens=1, output_tokens=1)
+
+        with patch("coder_buddy.llm.client.Agent") as MockAgent:
+            mock_agent_instance = MagicMock()
+            MockAgent.return_value = mock_agent_instance
+            mock_agent_instance.run_sync.return_value = mock_result
+
+            client = LLMClient(model="gemini-1.5-pro")
+            _, token_record = client.generate(VALID_PROMPT, CodeArtifact)
+
+        assert token_record.input_tokens > 0
+        assert token_record.output_tokens > 0
+
+
+# ---------------------------------------------------------------------------
 # Test: pydantic-ai not installed
 # ---------------------------------------------------------------------------
 

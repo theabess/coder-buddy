@@ -612,3 +612,91 @@ class TestProperty26ComputeUnifiedDiff:
             f"Expected non-empty diff for differing strings, got empty string.\n"
             f"a={a!r}\nb={b!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Token accumulation via model_copy(update=...) — task 20.2
+# ---------------------------------------------------------------------------
+
+
+class TestRefactorNodeTokenUsageAccumulation:
+    """
+    Verify that refactor_node correctly accumulates its TokenRecord into
+    AgentState.token_usage using model_copy(update={"refactor_node": token_record}).
+    """
+
+    def test_token_usage_other_fields_unchanged(self):
+        """
+        After refactor_node runs, all TokenRecord fields other than
+        refactor_node retain their prior values.
+        """
+        mock_client = _make_mock_llm_client(
+            source_code="# improved\nvalue = 1\nprint(value)\n"
+        )
+        config = _make_mock_config()
+        node = make_refactor_node(mock_client, config)
+        state = _make_state(current_code="x = 1\nprint(x)\n")
+
+        with patch("coder_buddy.nodes.refactor_node.log_node_event"):
+            result = node(state)
+
+        usage = result["token_usage"]
+        # Only refactor_node should be updated; all others remain at zero
+        assert usage.write_node.input_tokens == 0
+        assert usage.write_node.output_tokens == 0
+        assert usage.explanation.input_tokens == 0
+        assert usage.explanation.output_tokens == 0
+        assert usage.test_node.input_tokens == 0
+        assert usage.test_node.output_tokens == 0
+        assert usage.confidence.input_tokens == 0
+        assert usage.confidence.output_tokens == 0
+
+    def test_token_usage_prior_values_preserved(self):
+        """
+        When the input state already has non-zero token_usage for other nodes,
+        refactor_node only updates the refactor_node field and leaves others intact.
+        """
+        prior_usage = TokenUsage(
+            write_node=TokenRecord(input_tokens=300, output_tokens=150),
+            test_node=TokenRecord(input_tokens=200, output_tokens=100),
+        )
+        mock_client = _make_mock_llm_client(
+            source_code="# improved\nvalue = 1\nprint(value)\n"
+        )
+        config = _make_mock_config()
+        node = make_refactor_node(mock_client, config)
+        state = _make_state(current_code="x = 1\nprint(x)\n")
+        state["token_usage"] = prior_usage
+
+        with patch("coder_buddy.nodes.refactor_node.log_node_event"):
+            result = node(state)
+
+        usage = result["token_usage"]
+        # refactor_node field updated with new record
+        assert usage.refactor_node.input_tokens == 100
+        assert usage.refactor_node.output_tokens == 50
+        # Other fields preserved from prior_usage
+        assert usage.write_node.input_tokens == 300
+        assert usage.write_node.output_tokens == 150
+        assert usage.test_node.input_tokens == 200
+        assert usage.test_node.output_tokens == 100
+
+    def test_token_usage_is_new_object_not_same_reference(self):
+        """
+        refactor_node creates a new TokenUsage via model_copy, so the returned
+        token_usage is a different object from the input state's token_usage.
+        """
+        mock_client = _make_mock_llm_client(
+            source_code="# improved\nvalue = 1\nprint(value)\n"
+        )
+        config = _make_mock_config()
+        node = make_refactor_node(mock_client, config)
+        original_usage = TokenUsage()
+        state = _make_state(current_code="x = 1\nprint(x)\n")
+        state["token_usage"] = original_usage
+
+        with patch("coder_buddy.nodes.refactor_node.log_node_event"):
+            result = node(state)
+
+        # model_copy creates a new instance
+        assert result["token_usage"] is not original_usage

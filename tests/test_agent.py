@@ -1250,3 +1250,295 @@ def test_property18_history_bounded_and_fifo_after_many_runs(k: int) -> None:
         f"Expected history in insertion order {expected_order}, "
         f"got {history_codes}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Test 20.3: AgentResponse.token_usage reflects accumulated totals from all
+#            nodes in the run
+# --------------------------------------------------------------------------- #
+
+
+class TestTokenUsageAccumulation:
+    """
+    Req 20.3 — AgentResponse.token_usage reflects the accumulated totals
+    from all nodes in the run.
+
+    These tests verify that when the final AgentState carries a TokenUsage
+    with per-node records populated, the AgentResponse returned by
+    CoderBuddy.run() exposes those exact accumulated totals via
+    token_usage.total_input_tokens and token_usage.total_output_tokens.
+    """
+
+    def test_token_usage_reflects_write_node_tokens(self, patched_agent):
+        """token_usage must reflect write_node tokens from the final state."""
+        from coder_buddy.models import TokenRecord, TokenUsage
+
+        agent, mock_graph = patched_agent
+        state = _make_success_final_state()
+        state["token_usage"] = TokenUsage(
+            write_node=TokenRecord(input_tokens=100, output_tokens=50),
+        )
+        mock_graph.invoke.return_value = state
+
+        result = agent.run("write hello world")
+
+        assert result.token_usage.write_node.input_tokens == 100
+        assert result.token_usage.write_node.output_tokens == 50
+        assert result.token_usage.total_input_tokens == 100
+        assert result.token_usage.total_output_tokens == 50
+
+    def test_token_usage_reflects_all_node_tokens(self, patched_agent):
+        """token_usage must reflect accumulated totals from all nodes."""
+        from coder_buddy.models import TokenRecord, TokenUsage
+
+        agent, mock_graph = patched_agent
+        state = _make_success_final_state()
+        state["token_usage"] = TokenUsage(
+            write_node=TokenRecord(input_tokens=100, output_tokens=50),
+            refactor_node=TokenRecord(input_tokens=80, output_tokens=40),
+            explanation=TokenRecord(input_tokens=60, output_tokens=30),
+            test_node=TokenRecord(input_tokens=40, output_tokens=20),
+            confidence=TokenRecord(input_tokens=20, output_tokens=10),
+        )
+        mock_graph.invoke.return_value = state
+
+        result = agent.run("write hello world")
+
+        assert result.token_usage.total_input_tokens == 300   # 100+80+60+40+20
+        assert result.token_usage.total_output_tokens == 150  # 50+40+30+20+10
+
+    def test_token_usage_per_node_values_preserved(self, patched_agent):
+        """Each per-node TokenRecord must be preserved exactly in the response."""
+        from coder_buddy.models import TokenRecord, TokenUsage
+
+        agent, mock_graph = patched_agent
+        state = _make_success_final_state()
+        state["token_usage"] = TokenUsage(
+            write_node=TokenRecord(input_tokens=200, output_tokens=100),
+            refactor_node=TokenRecord(input_tokens=150, output_tokens=75),
+            confidence=TokenRecord(input_tokens=30, output_tokens=15),
+        )
+        mock_graph.invoke.return_value = state
+
+        result = agent.run("write hello world")
+
+        assert result.token_usage.write_node.input_tokens == 200
+        assert result.token_usage.write_node.output_tokens == 100
+        assert result.token_usage.refactor_node.input_tokens == 150
+        assert result.token_usage.refactor_node.output_tokens == 75
+        assert result.token_usage.confidence.input_tokens == 30
+        assert result.token_usage.confidence.output_tokens == 15
+
+    def test_token_usage_is_zero_when_state_has_default_token_usage(self, patched_agent):
+        """When the final state has a default TokenUsage, totals must be 0."""
+        from coder_buddy.models import TokenUsage
+
+        agent, mock_graph = patched_agent
+        state = _make_success_final_state()
+        state["token_usage"] = TokenUsage()  # all zeros
+        mock_graph.invoke.return_value = state
+
+        result = agent.run("write hello world")
+
+        assert result.token_usage.total_input_tokens == 0
+        assert result.token_usage.total_output_tokens == 0
+
+    def test_token_usage_type_is_token_usage(self, patched_agent):
+        """AgentResponse.token_usage must be a TokenUsage instance."""
+        from coder_buddy.models import TokenRecord, TokenUsage
+
+        agent, mock_graph = patched_agent
+        state = _make_success_final_state()
+        state["token_usage"] = TokenUsage(
+            write_node=TokenRecord(input_tokens=100, output_tokens=50),
+        )
+        mock_graph.invoke.return_value = state
+
+        result = agent.run("write hello world")
+
+        assert isinstance(result.token_usage, TokenUsage)
+
+    def test_token_usage_accumulated_totals_match_sum_of_nodes(self, patched_agent):
+        """
+        End-to-end: total_input_tokens and total_output_tokens must equal
+        the arithmetic sum of all per-node input/output tokens.
+        """
+        from coder_buddy.models import TokenRecord, TokenUsage
+
+        agent, mock_graph = patched_agent
+
+        write_in, write_out = 120, 60
+        refactor_in, refactor_out = 90, 45
+        explanation_in, explanation_out = 70, 35
+        test_in, test_out = 50, 25
+        confidence_in, confidence_out = 30, 15
+
+        state = _make_success_final_state()
+        state["token_usage"] = TokenUsage(
+            write_node=TokenRecord(input_tokens=write_in, output_tokens=write_out),
+            refactor_node=TokenRecord(input_tokens=refactor_in, output_tokens=refactor_out),
+            explanation=TokenRecord(input_tokens=explanation_in, output_tokens=explanation_out),
+            test_node=TokenRecord(input_tokens=test_in, output_tokens=test_out),
+            confidence=TokenRecord(input_tokens=confidence_in, output_tokens=confidence_out),
+        )
+        mock_graph.invoke.return_value = state
+
+        result = agent.run("write hello world")
+
+        expected_total_input = write_in + refactor_in + explanation_in + test_in + confidence_in
+        expected_total_output = write_out + refactor_out + explanation_out + test_out + confidence_out
+
+        assert result.token_usage.total_input_tokens == expected_total_input, (
+            f"Expected total_input_tokens={expected_total_input}, "
+            f"got {result.token_usage.total_input_tokens}"
+        )
+        assert result.token_usage.total_output_tokens == expected_total_output, (
+            f"Expected total_output_tokens={expected_total_output}, "
+            f"got {result.token_usage.total_output_tokens}"
+        )
+
+    def test_token_usage_on_failure_run_reflects_state(self, patched_agent):
+        """
+        Even on a failed run (success=False), token_usage must reflect
+        the accumulated totals from the final state.
+        """
+        from coder_buddy.models import TokenRecord, TokenUsage
+
+        agent, mock_graph = patched_agent
+        state = _make_failure_final_state()
+        state["token_usage"] = TokenUsage(
+            write_node=TokenRecord(input_tokens=300, output_tokens=150),
+        )
+        mock_graph.invoke.return_value = state
+
+        result = agent.run("write broken code")
+
+        assert result.success is False
+        assert result.token_usage.write_node.input_tokens == 300
+        assert result.token_usage.write_node.output_tokens == 150
+        assert result.token_usage.total_input_tokens == 300
+        assert result.token_usage.total_output_tokens == 150
+
+
+class TestTokenUsageEndToEndWithRealGraph:
+    """
+    End-to-end test that exercises the real LangGraph graph with mocked
+    LLM and sandbox, verifying that each node's TokenRecord is accumulated
+    into AgentResponse.token_usage.
+
+    This test uses the real graph (not a mocked graph.invoke) so the actual
+    node token accumulation logic is exercised.
+    """
+
+    def _make_integration_config(self, **overrides) -> "AgentConfig":
+        defaults = {
+            "llm_backend": "gemini-1.5-pro",
+            "sandbox_backend": "subprocess+venv",
+            "max_retries": 1,
+            "explanation_enabled": False,
+            "test_generation_enabled": False,
+            "diff_view_enabled": False,
+        }
+        defaults.update(overrides)
+        return AgentConfig(**defaults)
+
+    def _make_mock_sandbox(self):
+        from coder_buddy.sandbox.base import ExecutionResult
+
+        mock_sandbox = MagicMock()
+        mock_sandbox.health_check.return_value = None
+        mock_sandbox.install_dependencies.return_value = None
+        mock_sandbox.execute.return_value = ExecutionResult(
+            stdout="hello\n",
+            stderr="",
+            exit_code=0,
+            timed_out=False,
+        )
+        mock_sandbox.cleanup.return_value = None
+        return mock_sandbox
+
+    def test_write_node_tokens_accumulated_in_response(self):
+        """
+        With the real graph, write_node's TokenRecord must appear in
+        AgentResponse.token_usage after a successful run.
+        """
+        from coder_buddy.agent import CoderBuddy
+        from coder_buddy.graph import build_graph
+        from coder_buddy.models import CodeArtifact, TokenRecord
+        from coder_buddy.nodes.post_process import ConfidenceOutput
+
+        config = self._make_integration_config()
+        mock_sandbox = self._make_mock_sandbox()
+
+        write_token_record = TokenRecord(input_tokens=100, output_tokens=50)
+        confidence_token_record = TokenRecord(input_tokens=20, output_tokens=10)
+        refactor_token_record = TokenRecord(input_tokens=80, output_tokens=40)
+
+        artifact = CodeArtifact(
+            source_code="print('hello')",
+            file_name="main.py",
+            dependencies=[],
+            language="python",
+        )
+        confidence_output = ConfidenceOutput(confidence_score=4)
+
+        call_count = [0]
+
+        def _generate(prompt: str, output_type):
+            call_count[0] += 1
+            if output_type is CodeArtifact:
+                return (artifact, write_token_record)
+            elif output_type is ConfidenceOutput:
+                return (confidence_output, confidence_token_record)
+            else:
+                return (confidence_output, confidence_token_record)
+
+        mock_llm_client = MagicMock()
+        mock_llm_client.generate.side_effect = _generate
+
+        with (
+            patch("coder_buddy.agent._make_sandbox", return_value=mock_sandbox),
+            patch("coder_buddy.agent.LLMClient", return_value=mock_llm_client),
+            patch(
+                "coder_buddy.agent.build_graph",
+                side_effect=lambda sandbox, llm, cfg: build_graph(
+                    mock_sandbox, mock_llm_client, cfg
+                ),
+            ),
+        ):
+            agent = CoderBuddy(config)
+            result = agent.run("write a hello world script")
+
+        assert result.success is True, (
+            f"Expected success=True, got failure_reason={result.failure_reason}"
+        )
+        assert isinstance(result.token_usage, TokenUsage)
+
+        # write_node tokens must be accumulated
+        assert result.token_usage.write_node.input_tokens == 100, (
+            f"Expected write_node.input_tokens=100, "
+            f"got {result.token_usage.write_node.input_tokens}"
+        )
+        assert result.token_usage.write_node.output_tokens == 50, (
+            f"Expected write_node.output_tokens=50, "
+            f"got {result.token_usage.write_node.output_tokens}"
+        )
+
+        # confidence tokens must be accumulated (post_process always runs on success)
+        assert result.token_usage.confidence.input_tokens == 20, (
+            f"Expected confidence.input_tokens=20, "
+            f"got {result.token_usage.confidence.input_tokens}"
+        )
+
+        # total must reflect the sum
+        expected_total_input = (
+            result.token_usage.write_node.input_tokens
+            + result.token_usage.refactor_node.input_tokens
+            + result.token_usage.explanation.input_tokens
+            + result.token_usage.test_node.input_tokens
+            + result.token_usage.confidence.input_tokens
+        )
+        assert result.token_usage.total_input_tokens == expected_total_input, (
+            f"total_input_tokens={result.token_usage.total_input_tokens} "
+            f"does not match sum of per-node records={expected_total_input}"
+        )

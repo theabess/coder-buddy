@@ -672,3 +672,115 @@ class TestProperty17LastNSessionHistoryEntries:
                 f"n={n}, extra={extra}\n"
                 f"prompt={prompt!r}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Tests for token_usage accumulation in write_node
+# ---------------------------------------------------------------------------
+
+
+class TestWriteNodeTokenUsageAccumulation:
+    """
+    Verify that write_node correctly accumulates its TokenRecord into
+    AgentState.token_usage using model_copy(update={"write_node": token_record}).
+    """
+
+    def test_token_usage_write_node_field_updated(self):
+        """
+        After write_node runs, result['token_usage'].write_node has the
+        TokenRecord returned by the LLM (non-zero tokens).
+        """
+        mock_client = _make_mock_llm_client()
+        config = _make_mock_config()
+        node = make_write_node(mock_client, config)
+        state = _make_state()
+
+        with patch("coder_buddy.nodes.write_node.log_node_event"):
+            result = node(state)
+
+        assert result["token_usage"].write_node.input_tokens == 100
+        assert result["token_usage"].write_node.output_tokens == 50
+
+    def test_token_usage_other_fields_unchanged(self):
+        """
+        After write_node runs, all other TokenRecord fields in token_usage
+        retain their prior values (zero by default).
+        """
+        mock_client = _make_mock_llm_client()
+        config = _make_mock_config()
+        node = make_write_node(mock_client, config)
+        state = _make_state()
+
+        with patch("coder_buddy.nodes.write_node.log_node_event"):
+            result = node(state)
+
+        usage = result["token_usage"]
+        # Only write_node should be updated; all others remain at zero
+        assert usage.refactor_node.input_tokens == 0
+        assert usage.refactor_node.output_tokens == 0
+        assert usage.explanation.input_tokens == 0
+        assert usage.explanation.output_tokens == 0
+        assert usage.test_node.input_tokens == 0
+        assert usage.test_node.output_tokens == 0
+        assert usage.confidence.input_tokens == 0
+        assert usage.confidence.output_tokens == 0
+
+    def test_token_usage_prior_values_preserved(self):
+        """
+        When the input state already has non-zero token_usage for other nodes,
+        write_node only updates the write_node field and leaves others intact.
+        """
+        from coder_buddy.models import TokenRecord, TokenUsage
+
+        prior_usage = TokenUsage(
+            refactor_node=TokenRecord(input_tokens=200, output_tokens=100),
+            test_node=TokenRecord(input_tokens=150, output_tokens=75),
+        )
+        mock_client = _make_mock_llm_client()
+        config = _make_mock_config()
+        node = make_write_node(mock_client, config)
+        state = _make_state()
+        state["token_usage"] = prior_usage
+
+        with patch("coder_buddy.nodes.write_node.log_node_event"):
+            result = node(state)
+
+        usage = result["token_usage"]
+        # write_node field updated with new record
+        assert usage.write_node.input_tokens == 100
+        assert usage.write_node.output_tokens == 50
+        # Other fields preserved from prior_usage
+        assert usage.refactor_node.input_tokens == 200
+        assert usage.refactor_node.output_tokens == 100
+        assert usage.test_node.input_tokens == 150
+        assert usage.test_node.output_tokens == 75
+
+    def test_token_usage_returned_in_result_dict(self):
+        """The result dict from write_node always contains the 'token_usage' key."""
+        mock_client = _make_mock_llm_client()
+        config = _make_mock_config()
+        node = make_write_node(mock_client, config)
+        state = _make_state()
+
+        with patch("coder_buddy.nodes.write_node.log_node_event"):
+            result = node(state)
+
+        assert "token_usage" in result
+
+    def test_token_usage_is_new_object_not_same_reference(self):
+        """
+        write_node creates a new TokenUsage via model_copy, so the returned
+        token_usage is a different object from the input state's token_usage.
+        """
+        mock_client = _make_mock_llm_client()
+        config = _make_mock_config()
+        node = make_write_node(mock_client, config)
+        original_usage = TokenUsage()
+        state = _make_state()
+        state["token_usage"] = original_usage
+
+        with patch("coder_buddy.nodes.write_node.log_node_event"):
+            result = node(state)
+
+        # model_copy creates a new instance
+        assert result["token_usage"] is not original_usage

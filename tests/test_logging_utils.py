@@ -430,3 +430,407 @@ class TestLogNodeEventProperty16:
         parsed = json.loads(msg)
         assert isinstance(parsed, dict)
         assert parsed["event"] in {"start", "end"}
+
+
+# --------------------------------------------------------------------------- #
+# Task 22.2 — Verify structured JSON logs are emitted and parseable
+# --------------------------------------------------------------------------- #
+# These tests verify:
+# 1. log_node_event emits JSON with all required keys (ts, node, event,
+#    retry_count) — verifying Requirement 9.1 / 9.5
+# 2. The run-summary log entry emitted by agent.py is valid JSON with the
+#    expected fields (event, success, retry_count, elapsed_seconds, ts,
+#    confidence_score, token_usage, refactor_diff) — verifying Req 9.3 / 9.4
+# 3. When a StreamHandler writing to stdout is attached, every captured log
+#    line is parseable by json.loads() — verifying Req 9.5
+# --------------------------------------------------------------------------- #
+
+import io
+import sys
+from unittest.mock import MagicMock, patch
+
+
+class TestTask22LogNodeEventJsonOutput:
+    """
+    Task 22.2 — Verify log_node_event emits valid JSON to stdout.
+
+    Attaches a StreamHandler pointing to a StringIO buffer (simulating
+    stdout) and confirms every emitted line is parseable by json.loads()
+    and contains the required keys.
+    """
+
+    def _make_stdout_handler(self, stream: io.StringIO) -> logging.StreamHandler:
+        handler = logging.StreamHandler(stream)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        return handler
+
+    def test_log_node_event_stdout_output_is_valid_json(self):
+        """Each line written to stdout by log_node_event must be parseable by json.loads()."""
+        buf = io.StringIO()
+        handler = self._make_stdout_handler(buf)
+        logger = logging.getLogger("coder_buddy")
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+        try:
+            log_node_event("write_node", "start", retry_count=0)
+            log_node_event("execute_node", "end", retry_count=1, outcome="retry")
+        finally:
+            logger.removeHandler(handler)
+
+        output = buf.getvalue().strip()
+        lines = [line for line in output.splitlines() if line.strip()]
+        assert len(lines) == 2, f"Expected 2 log lines, got {len(lines)}: {lines!r}"
+        for line in lines:
+            parsed = json.loads(line)  # raises json.JSONDecodeError if not valid JSON
+            assert isinstance(parsed, dict)
+
+    def test_log_node_event_stdout_required_keys_present(self):
+        """Every log line written to stdout must contain ts, node, event, retry_count."""
+        buf = io.StringIO()
+        handler = self._make_stdout_handler(buf)
+        logger = logging.getLogger("coder_buddy")
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+        try:
+            log_node_event("write_node", "start", retry_count=0)
+            log_node_event("evaluator", "end", retry_count=2, outcome="refactor")
+        finally:
+            logger.removeHandler(handler)
+
+        lines = [line for line in buf.getvalue().splitlines() if line.strip()]
+        for line in lines:
+            entry = json.loads(line)
+            for key in ("ts", "node", "event", "retry_count"):
+                assert key in entry, (
+                    f"Required key '{key}' missing from log entry: {entry!r}"
+                )
+
+    def test_log_node_event_multiple_nodes_all_valid_json(self):
+        """Simulate a full node lifecycle (start + end for multiple nodes) — all lines valid JSON."""
+        buf = io.StringIO()
+        handler = self._make_stdout_handler(buf)
+        logger = logging.getLogger("coder_buddy")
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+        try:
+            nodes = ["write_node", "execute_node", "evaluator", "refactor_node", "post_process"]
+            for node in nodes:
+                log_node_event(node, "start", retry_count=0)
+                log_node_event(node, "end", retry_count=0, outcome="ok")
+        finally:
+            logger.removeHandler(handler)
+
+        lines = [line for line in buf.getvalue().splitlines() if line.strip()]
+        assert len(lines) == len(nodes) * 2, (
+            f"Expected {len(nodes) * 2} log lines, got {len(lines)}"
+        )
+        for line in lines:
+            parsed = json.loads(line)
+            assert isinstance(parsed, dict)
+            assert parsed["event"] in {"start", "end"}
+
+
+class TestTask22RunSummaryLogEntry:
+    """
+    Task 22.2 — Verify the run-summary log entry emitted by agent.py is
+    valid JSON with the expected fields.
+
+    The run-summary is emitted by CoderBuddy.run() after the graph
+    completes.  We mock the graph and sandbox so no real I/O occurs, then
+    capture the log output and verify the final entry.
+    """
+
+    def _make_config(self, **overrides):
+        from coder_buddy.config import AgentConfig
+        defaults = {
+            "llm_backend": "gemini-1.5-pro",
+            "sandbox_backend": "subprocess+venv",
+            "max_retries": 3,
+            "explanation_enabled": False,
+            "test_generation_enabled": False,
+            "diff_view_enabled": False,
+        }
+        defaults.update(overrides)
+        return AgentConfig(**defaults)
+
+    def _make_success_final_state(self) -> dict:
+        from coder_buddy.models import TokenUsage
+        return {
+            "current_code": "print('hello')",
+            "file_name": "main.py",
+            "dependencies": [],
+            "execution_logs": "hello\n",
+            "error_status": False,
+            "retry_count": 1,
+            "explanation": None,
+            "test_code": None,
+            "test_logs": None,
+            "confidence_score": 4,
+            "refactor_diff": "--- a\n+++ b\n",
+            "token_usage": TokenUsage(),
+            "warning": None,
+            "max_retries": 3,
+            "pre_refactor_code": None,
+            "session_history": [],
+            "user_prompt": "write hello world",
+            "language": "python",
+            "_route": None,
+        }
+
+    def _build_patched_agent(self, final_state: dict):
+        """Build a CoderBuddy with all I/O mocked, return (agent, mock_graph)."""
+        from coder_buddy.agent import CoderBuddy
+
+        config = self._make_config()
+        with (
+            patch("coder_buddy.agent._make_sandbox") as mock_make_sandbox,
+            patch("coder_buddy.agent.LLMClient"),
+            patch("coder_buddy.agent.build_graph") as mock_build_graph,
+        ):
+            mock_sandbox = MagicMock()
+            mock_sandbox.health_check.return_value = None
+            mock_make_sandbox.return_value = mock_sandbox
+
+            mock_graph = MagicMock()
+            mock_graph.invoke.return_value = final_state
+            mock_build_graph.return_value = mock_graph
+
+            agent = CoderBuddy(config)
+
+        # Patch the graph on the already-constructed agent so invoke uses our mock
+        agent._graph = mock_graph
+        return agent, mock_graph
+
+    def test_run_summary_log_entry_is_valid_json(self):
+        """The run-summary log entry emitted by agent.run() must be parseable by json.loads()."""
+        final_state = self._make_success_final_state()
+        agent, mock_graph = self._build_patched_agent(final_state)
+
+        handler = make_handler()
+        try:
+            agent.run("write hello world")
+        finally:
+            remove_handler(handler)
+
+        # The last record should be the run-summary entry
+        assert len(handler.records) >= 1, "Expected at least one log record"
+        last_msg = handler.records[-1].getMessage()
+        parsed = json.loads(last_msg)  # raises if not valid JSON
+        assert isinstance(parsed, dict)
+
+    def test_run_summary_log_entry_has_required_fields(self):
+        """The run-summary entry must contain: event, success, retry_count, elapsed_seconds, ts."""
+        final_state = self._make_success_final_state()
+        agent, mock_graph = self._build_patched_agent(final_state)
+
+        handler = make_handler()
+        try:
+            agent.run("write hello world")
+        finally:
+            remove_handler(handler)
+
+        last_msg = handler.records[-1].getMessage()
+        entry = json.loads(last_msg)
+
+        required_keys = ("ts", "event", "success", "retry_count", "elapsed_seconds")
+        for key in required_keys:
+            assert key in entry, (
+                f"Required key '{key}' missing from run-summary entry: {entry!r}"
+            )
+
+    def test_run_summary_log_entry_event_is_run_complete(self):
+        """The run-summary entry must have event == 'run_complete'."""
+        final_state = self._make_success_final_state()
+        agent, mock_graph = self._build_patched_agent(final_state)
+
+        handler = make_handler()
+        try:
+            agent.run("write hello world")
+        finally:
+            remove_handler(handler)
+
+        last_msg = handler.records[-1].getMessage()
+        entry = json.loads(last_msg)
+        assert entry["event"] == "run_complete", (
+            f"Expected event='run_complete', got event={entry.get('event')!r}"
+        )
+
+    def test_run_summary_log_entry_success_field_matches_outcome(self):
+        """The success field in the run-summary must match the actual run outcome."""
+        final_state = self._make_success_final_state()
+        agent, mock_graph = self._build_patched_agent(final_state)
+
+        handler = make_handler()
+        try:
+            result = agent.run("write hello world")
+        finally:
+            remove_handler(handler)
+
+        last_msg = handler.records[-1].getMessage()
+        entry = json.loads(last_msg)
+        assert entry["success"] == result.success, (
+            f"Log entry success={entry['success']!r} does not match "
+            f"AgentResponse.success={result.success!r}"
+        )
+
+    def test_run_summary_log_entry_retry_count_matches_outcome(self):
+        """The retry_count in the run-summary must match the final state's retry_count."""
+        final_state = self._make_success_final_state()
+        agent, mock_graph = self._build_patched_agent(final_state)
+
+        handler = make_handler()
+        try:
+            result = agent.run("write hello world")
+        finally:
+            remove_handler(handler)
+
+        last_msg = handler.records[-1].getMessage()
+        entry = json.loads(last_msg)
+        assert entry["retry_count"] == result.retry_count, (
+            f"Log entry retry_count={entry['retry_count']!r} does not match "
+            f"AgentResponse.retry_count={result.retry_count!r}"
+        )
+
+    def test_run_summary_log_entry_has_token_usage_field(self):
+        """The run-summary entry must contain a token_usage dict."""
+        final_state = self._make_success_final_state()
+        agent, mock_graph = self._build_patched_agent(final_state)
+
+        handler = make_handler()
+        try:
+            agent.run("write hello world")
+        finally:
+            remove_handler(handler)
+
+        last_msg = handler.records[-1].getMessage()
+        entry = json.loads(last_msg)
+        assert "token_usage" in entry, (
+            f"Expected 'token_usage' key in run-summary entry: {entry!r}"
+        )
+        assert isinstance(entry["token_usage"], dict), (
+            f"Expected token_usage to be a dict, got {type(entry['token_usage'])!r}"
+        )
+
+    def test_run_summary_log_entry_has_confidence_score_field(self):
+        """The run-summary entry must contain a confidence_score field."""
+        final_state = self._make_success_final_state()
+        agent, mock_graph = self._build_patched_agent(final_state)
+
+        handler = make_handler()
+        try:
+            agent.run("write hello world")
+        finally:
+            remove_handler(handler)
+
+        last_msg = handler.records[-1].getMessage()
+        entry = json.loads(last_msg)
+        assert "confidence_score" in entry, (
+            f"Expected 'confidence_score' key in run-summary entry: {entry!r}"
+        )
+
+    def test_run_summary_log_entry_has_refactor_diff_field(self):
+        """The run-summary entry must contain a refactor_diff field."""
+        final_state = self._make_success_final_state()
+        agent, mock_graph = self._build_patched_agent(final_state)
+
+        handler = make_handler()
+        try:
+            agent.run("write hello world")
+        finally:
+            remove_handler(handler)
+
+        last_msg = handler.records[-1].getMessage()
+        entry = json.loads(last_msg)
+        assert "refactor_diff" in entry, (
+            f"Expected 'refactor_diff' key in run-summary entry: {entry!r}"
+        )
+
+    def test_run_summary_log_entry_elapsed_seconds_is_positive(self):
+        """elapsed_seconds in the run-summary must be a positive number."""
+        final_state = self._make_success_final_state()
+        agent, mock_graph = self._build_patched_agent(final_state)
+
+        handler = make_handler()
+        try:
+            agent.run("write hello world")
+        finally:
+            remove_handler(handler)
+
+        last_msg = handler.records[-1].getMessage()
+        entry = json.loads(last_msg)
+        assert isinstance(entry["elapsed_seconds"], (int, float)), (
+            f"Expected elapsed_seconds to be numeric, got {type(entry['elapsed_seconds'])!r}"
+        )
+        assert entry["elapsed_seconds"] >= 0, (
+            f"Expected elapsed_seconds >= 0, got {entry['elapsed_seconds']!r}"
+        )
+
+    def test_run_summary_log_entry_ts_is_positive_float(self):
+        """ts in the run-summary must be a positive Unix timestamp."""
+        final_state = self._make_success_final_state()
+        agent, mock_graph = self._build_patched_agent(final_state)
+
+        handler = make_handler()
+        try:
+            agent.run("write hello world")
+        finally:
+            remove_handler(handler)
+
+        last_msg = handler.records[-1].getMessage()
+        entry = json.loads(last_msg)
+        assert isinstance(entry["ts"], float), (
+            f"Expected ts to be a float, got {type(entry['ts'])!r}"
+        )
+        assert entry["ts"] > 0, f"Expected ts > 0, got {entry['ts']!r}"
+
+    def test_all_log_entries_in_a_run_are_valid_json(self):
+        """Every log entry emitted during a full agent.run() call must be valid JSON."""
+        final_state = self._make_success_final_state()
+        agent, mock_graph = self._build_patched_agent(final_state)
+
+        handler = make_handler()
+        try:
+            agent.run("write hello world")
+        finally:
+            remove_handler(handler)
+
+        assert len(handler.records) >= 1, "Expected at least one log record during run()"
+        for record in handler.records:
+            msg = record.getMessage()
+            parsed = json.loads(msg)  # raises json.JSONDecodeError if not valid JSON
+            assert isinstance(parsed, dict), (
+                f"Expected log entry to be a JSON object, got {type(parsed)!r}: {msg!r}"
+            )
+
+    def test_stdout_stream_handler_produces_parseable_json_lines(self):
+        """
+        When a StreamHandler writing to stdout is attached to the coder_buddy
+        logger, every line captured during agent.run() must be parseable by
+        json.loads() — verifying Requirement 9.5.
+        """
+        final_state = self._make_success_final_state()
+        agent, mock_graph = self._build_patched_agent(final_state)
+
+        # Redirect stdout to a buffer to capture what would be written to stdout
+        buf = io.StringIO()
+        stdout_handler = logging.StreamHandler(buf)
+        stdout_handler.setFormatter(logging.Formatter("%(message)s"))
+
+        logger = logging.getLogger("coder_buddy")
+        logger.addHandler(stdout_handler)
+        logger.setLevel(logging.DEBUG)
+        try:
+            agent.run("write hello world")
+        finally:
+            logger.removeHandler(stdout_handler)
+
+        output = buf.getvalue().strip()
+        assert output, "Expected log output to stdout, got empty string"
+
+        lines = [line for line in output.splitlines() if line.strip()]
+        assert len(lines) >= 1, f"Expected at least 1 log line, got {len(lines)}"
+        for line in lines:
+            parsed = json.loads(line)  # raises json.JSONDecodeError if not valid JSON
+            assert isinstance(parsed, dict), (
+                f"Expected each stdout log line to be a JSON object: {line!r}"
+            )

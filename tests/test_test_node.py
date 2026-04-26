@@ -752,3 +752,121 @@ class TestLogNodeEventCalls:
 
         for c in mock_log.call_args_list:
             assert c.kwargs.get("node") == "test_node"
+
+
+# ---------------------------------------------------------------------------
+# Token accumulation via model_copy(update=...) — task 20.2
+# ---------------------------------------------------------------------------
+
+
+class TestTestNodeTokenUsageAccumulation:
+    """
+    Verify that test_node correctly accumulates its TokenRecord into
+    AgentState.token_usage using model_copy(update={"test_node": token_record}).
+    """
+
+    def test_token_usage_other_fields_unchanged_on_success(self):
+        """
+        After a successful test run, all TokenRecord fields other than
+        test_node retain their prior zero values.
+        """
+        sandbox = _make_sandbox(exit_code=0)
+        llm_client = _make_mock_llm_client()
+        config = _make_mock_config()
+        node = make_test_node(sandbox, llm_client, config)
+        state = _make_state()
+
+        with patch("coder_buddy.nodes.test_node.log_node_event"):
+            result = node(state)
+
+        usage = result["token_usage"]
+        assert usage.write_node.input_tokens == 0
+        assert usage.write_node.output_tokens == 0
+        assert usage.refactor_node.input_tokens == 0
+        assert usage.refactor_node.output_tokens == 0
+        assert usage.explanation.input_tokens == 0
+        assert usage.explanation.output_tokens == 0
+        assert usage.confidence.input_tokens == 0
+        assert usage.confidence.output_tokens == 0
+        # test_node is the only updated field
+        assert usage.test_node.input_tokens == 100
+        assert usage.test_node.output_tokens == 50
+
+    def test_token_usage_prior_values_preserved_on_success(self):
+        """
+        When the input state already has non-zero token_usage for other nodes,
+        test_node only updates the test_node field and leaves others intact.
+        """
+        prior_usage = TokenUsage(
+            write_node=TokenRecord(input_tokens=400, output_tokens=200),
+            refactor_node=TokenRecord(input_tokens=250, output_tokens=125),
+        )
+        sandbox = _make_sandbox(exit_code=0)
+        llm_client = _make_mock_llm_client()
+        config = _make_mock_config()
+        node = make_test_node(sandbox, llm_client, config)
+        state = _make_state()
+        state["token_usage"] = prior_usage
+
+        with patch("coder_buddy.nodes.test_node.log_node_event"):
+            result = node(state)
+
+        usage = result["token_usage"]
+        # test_node field updated
+        assert usage.test_node.input_tokens == 100
+        assert usage.test_node.output_tokens == 50
+        # prior values preserved
+        assert usage.write_node.input_tokens == 400
+        assert usage.write_node.output_tokens == 200
+        assert usage.refactor_node.input_tokens == 250
+        assert usage.refactor_node.output_tokens == 125
+
+    def test_token_usage_is_new_object_not_same_reference(self):
+        """
+        test_node creates a new TokenUsage via model_copy, so the returned
+        token_usage is a different object from the input state's token_usage.
+        """
+        sandbox = _make_sandbox(exit_code=0)
+        llm_client = _make_mock_llm_client()
+        config = _make_mock_config()
+        node = make_test_node(sandbox, llm_client, config)
+        original_usage = TokenUsage()
+        state = _make_state()
+        state["token_usage"] = original_usage
+
+        with patch("coder_buddy.nodes.test_node.log_node_event"):
+            result = node(state)
+
+        assert result["token_usage"] is not original_usage
+
+    def test_token_usage_accumulates_across_retries(self):
+        """
+        When test_node retries (due to test failure), each retry call to
+        llm_client.generate overwrites the test_node field via model_copy.
+        The final token_usage reflects the last LLM call's token record.
+        """
+        fail_result = ExecutionResult(
+            stdout="", stderr="FAILED", exit_code=1, timed_out=False
+        )
+        pass_result = ExecutionResult(
+            stdout="1 passed", stderr="", exit_code=0, timed_out=False
+        )
+        sandbox = MagicMock()
+        sandbox.execute.side_effect = [fail_result, pass_result]
+
+        # Each generate call returns the same token record (100 in, 50 out)
+        llm_client = _make_mock_llm_client()
+        config = _make_mock_config()
+        node = make_test_node(sandbox, llm_client, config)
+        state = _make_state()
+
+        with patch("coder_buddy.nodes.test_node.log_node_event"):
+            result = node(state)
+
+        # After 2 LLM calls, test_node field reflects the last record
+        usage = result["token_usage"]
+        assert usage.test_node.input_tokens == 100
+        assert usage.test_node.output_tokens == 50
+        # Other fields untouched
+        assert usage.write_node.input_tokens == 0
+        assert usage.refactor_node.input_tokens == 0

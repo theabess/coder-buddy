@@ -734,3 +734,281 @@ class TestExplanationAndTestGenerationEnabled:
 from tests.test_property19 import (  # noqa: E402, F401
     test_property19_explanation_is_non_empty_string_when_enabled,
 )
+
+
+# --------------------------------------------------------------------------- #
+# Task 22.3 — Verify AgentResponse includes all five enrichment fields
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture(scope="session")
+def all_features_result():
+    """
+    Agent F: all features enabled (explanation + test generation + diff view).
+
+    Patches venv creation to use --system-site-packages so pytest (already
+    installed in the project venv) is available in the fresh sandbox venv
+    without a slow pip-install step.
+
+    The mock LLM returns:
+    - A hello-world CodeArtifact for the write node.
+    - A refactored CodeArtifact (with a comment added) for the refactor node.
+    - A passing pytest suite CodeArtifact for the test node.
+    - A canned ExplanationOutput for the post-process node.
+    - A ConfidenceOutput with score 4.
+    """
+    import subprocess as _subprocess
+
+    _original_run = _subprocess.run
+
+    def _patched_subprocess_run(args, **kwargs):
+        """Inject --system-site-packages into every venv creation call."""
+        if (
+            isinstance(args, list)
+            and len(args) >= 3
+            and "-m" in args
+            and "venv" in args
+            and "--system-site-packages" not in args
+        ):
+            args = list(args) + ["--system-site-packages"]
+        return _original_run(args, **kwargs)
+
+    token_record = _make_token_record()
+    hello_world_artifact = _make_hello_world_artifact()
+
+    # Refactored version has a comment added — ensures a non-empty diff
+    refactored_artifact = CodeArtifact(
+        source_code='# Print a greeting to standard output.\nprint("Hello, World!")\n',
+        file_name="main.py",
+        dependencies=[],
+        language="python",
+    )
+
+    test_suite_code = (
+        "def test_always_passes():\n"
+        "    assert True\n"
+        "\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    import pytest\n"
+        "    pytest.main([__file__, '-v'])\n"
+    )
+    test_artifact = CodeArtifact(
+        source_code=test_suite_code,
+        file_name="test_main.py",
+        dependencies=[],
+        language="python",
+    )
+
+    confidence_output = ConfidenceOutput(confidence_score=4)
+    explanation_output = ExplanationOutput(
+        explanation="This script prints 'Hello, World!' to standard output."
+    )
+
+    code_artifact_calls = [hello_world_artifact, refactored_artifact, test_artifact]
+    call_index = {"n": 0}
+
+    def _generate(prompt: str, output_type: type) -> tuple:
+        if output_type is CodeArtifact:
+            idx = min(call_index["n"], len(code_artifact_calls) - 1)
+            artifact = code_artifact_calls[idx]
+            call_index["n"] += 1
+            return (artifact, token_record)
+        elif output_type is ConfidenceOutput:
+            return (confidence_output, token_record)
+        elif output_type is ExplanationOutput:
+            return (explanation_output, token_record)
+        else:
+            return (confidence_output, token_record)
+
+    mock_client = MagicMock()
+    mock_client.generate.side_effect = _generate
+
+    with patch(
+        "coder_buddy.sandbox.subprocess_venv.subprocess.run",
+        side_effect=_patched_subprocess_run,
+    ):
+        agent = _build_agent_with_mock_llm(
+            mock_client,
+            explanation_enabled=True,
+            test_generation_enabled=True,
+            diff_view_enabled=True,
+        )
+        result = agent.run("write a hello world script in Python")
+
+    return result
+
+
+class TestAllFiveEnrichmentFields:
+    """
+    Task 22.3: Verify AgentResponse includes all five enrichment fields in a
+    successful end-to-end run with all features enabled.
+
+    Verifies:
+    - ``token_usage`` — a TokenUsage instance with positive total token counts
+    - ``confidence_score`` — an integer in [1, 5]
+    - ``refactor_diff`` — a string (non-None; may be empty if no changes)
+    - ``explanation`` — a non-empty string
+    - ``test_code`` — a non-empty string
+    """
+
+    def test_success_is_true(self, all_features_result):
+        """Precondition: the run must succeed for enrichment fields to be populated."""
+        assert all_features_result.success is True, (
+            f"Expected success=True, got success={all_features_result.success}. "
+            f"failure_reason={all_features_result.failure_reason!r}, "
+            f"execution_logs={all_features_result.execution_logs!r}"
+        )
+
+    # --- token_usage ---
+
+    def test_token_usage_is_token_usage_instance(self, all_features_result):
+        """token_usage must be a TokenUsage instance."""
+        assert isinstance(all_features_result.token_usage, TokenUsage)
+
+    def test_token_usage_total_input_tokens_positive(self, all_features_result):
+        """token_usage.total_input_tokens must be > 0 after a full run."""
+        assert all_features_result.token_usage.total_input_tokens > 0, (
+            f"Expected total_input_tokens > 0, "
+            f"got {all_features_result.token_usage.total_input_tokens}"
+        )
+
+    def test_token_usage_total_output_tokens_positive(self, all_features_result):
+        """token_usage.total_output_tokens must be > 0 after a full run."""
+        assert all_features_result.token_usage.total_output_tokens > 0, (
+            f"Expected total_output_tokens > 0, "
+            f"got {all_features_result.token_usage.total_output_tokens}"
+        )
+
+    def test_token_usage_write_node_non_zero(self, all_features_result):
+        """write_node must have recorded token usage."""
+        assert all_features_result.token_usage.write_node.input_tokens > 0
+
+    def test_token_usage_confidence_non_zero(self, all_features_result):
+        """confidence node must have recorded token usage."""
+        assert all_features_result.token_usage.confidence.input_tokens > 0
+
+    def test_token_usage_explanation_non_zero(self, all_features_result):
+        """explanation node must have recorded token usage when explanation_enabled=True."""
+        assert all_features_result.token_usage.explanation.input_tokens > 0
+
+    # --- confidence_score ---
+
+    def test_confidence_score_is_not_none(self, all_features_result):
+        """confidence_score must not be None on a successful run."""
+        assert all_features_result.confidence_score is not None, (
+            "Expected confidence_score to be non-None on a successful run"
+        )
+
+    def test_confidence_score_is_integer(self, all_features_result):
+        """confidence_score must be an integer."""
+        assert isinstance(all_features_result.confidence_score, int), (
+            f"Expected confidence_score to be int, "
+            f"got {type(all_features_result.confidence_score)}"
+        )
+
+    def test_confidence_score_in_valid_range(self, all_features_result):
+        """confidence_score must be in [1, 5]."""
+        assert 1 <= all_features_result.confidence_score <= 5, (
+            f"Expected confidence_score in [1, 5], "
+            f"got {all_features_result.confidence_score}"
+        )
+
+    # --- refactor_diff ---
+
+    def test_refactor_diff_is_not_none(self, all_features_result):
+        """refactor_diff must not be None when diff_view_enabled=True."""
+        assert all_features_result.refactor_diff is not None, (
+            "Expected refactor_diff to be non-None when diff_view_enabled=True"
+        )
+
+    def test_refactor_diff_is_string(self, all_features_result):
+        """refactor_diff must be a string."""
+        assert isinstance(all_features_result.refactor_diff, str), (
+            f"Expected refactor_diff to be str, "
+            f"got {type(all_features_result.refactor_diff)}"
+        )
+
+    def test_refactor_diff_is_non_empty_when_code_changed(self, all_features_result):
+        """refactor_diff must be non-empty when the refactored code differs from original."""
+        # The mock LLM returns a refactored artifact with a comment added,
+        # so the diff should be non-empty.
+        assert len(all_features_result.refactor_diff) > 0, (
+            f"Expected non-empty refactor_diff when code was changed by refactor node, "
+            f"got {all_features_result.refactor_diff!r}"
+        )
+
+    # --- explanation ---
+
+    def test_explanation_is_not_none(self, all_features_result):
+        """explanation must not be None when explanation_enabled=True."""
+        assert all_features_result.explanation is not None, (
+            "Expected explanation to be non-None when explanation_enabled=True"
+        )
+
+    def test_explanation_is_string(self, all_features_result):
+        """explanation must be a string."""
+        assert isinstance(all_features_result.explanation, str), (
+            f"Expected explanation to be str, "
+            f"got {type(all_features_result.explanation)}"
+        )
+
+    def test_explanation_is_non_empty(self, all_features_result):
+        """explanation must be a non-empty string."""
+        assert all_features_result.explanation.strip(), (
+            f"Expected non-empty explanation, got {all_features_result.explanation!r}"
+        )
+
+    # --- test_code ---
+
+    def test_test_code_is_not_none(self, all_features_result):
+        """test_code must not be None when test_generation_enabled=True."""
+        assert all_features_result.test_code is not None, (
+            "Expected test_code to be non-None when test_generation_enabled=True"
+        )
+
+    def test_test_code_is_string(self, all_features_result):
+        """test_code must be a string."""
+        assert isinstance(all_features_result.test_code, str), (
+            f"Expected test_code to be str, "
+            f"got {type(all_features_result.test_code)}"
+        )
+
+    def test_test_code_is_non_empty(self, all_features_result):
+        """test_code must be a non-empty string."""
+        assert all_features_result.test_code.strip(), (
+            f"Expected non-empty test_code, got {all_features_result.test_code!r}"
+        )
+
+    # --- combined assertion: all five fields present and valid ---
+
+    def test_all_five_fields_present_and_valid(self, all_features_result):
+        """
+        Single combined assertion: all five enrichment fields must be present
+        and satisfy their constraints in a successful end-to-end run.
+        """
+        result = all_features_result
+
+        # 1. token_usage — TokenUsage with positive totals
+        assert isinstance(result.token_usage, TokenUsage)
+        assert result.token_usage.total_input_tokens > 0
+        assert result.token_usage.total_output_tokens > 0
+
+        # 2. confidence_score — integer in [1, 5]
+        assert result.confidence_score is not None
+        assert isinstance(result.confidence_score, int)
+        assert 1 <= result.confidence_score <= 5
+
+        # 3. refactor_diff — non-None string
+        assert result.refactor_diff is not None
+        assert isinstance(result.refactor_diff, str)
+
+        # 4. explanation — non-empty string
+        assert result.explanation is not None
+        assert isinstance(result.explanation, str)
+        assert result.explanation.strip()
+
+        # 5. test_code — non-empty string
+        assert result.test_code is not None
+        assert isinstance(result.test_code, str)
+        assert result.test_code.strip()
