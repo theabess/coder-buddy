@@ -15,6 +15,13 @@ import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+# Load .env automatically if present (no-op when the file doesn't exist)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv not installed; rely on environment variables being set manually
+
 from coder_buddy.config import AgentConfig, ConfigurationError
 from coder_buddy.graph import build_graph
 from coder_buddy.llm.client import LLMClient
